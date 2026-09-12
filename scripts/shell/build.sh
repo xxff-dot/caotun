@@ -96,6 +96,12 @@ rm -f ../dist/*.~
 # ---- [4/4] 组装 Release 包（供 GitHub Release 挂载 / install-server.sh 远程下载）----
 echo "[4/4] 组装 Release 包..."
 tar -czf ../dist/caotun-linux.tar.gz -C ../dist caotun_linux shell server.conf client.conf 2>/dev/null
-command -v zip >/dev/null 2>&1 && (cd .. && zip -q -r dist/caotun-windows.zip dist/caotun.exe dist/windows dist/client.conf dist/server.conf) || echo "跳过 windows zip（缺 zip 命令，可手动打包）"
+if command -v zip >/dev/null 2>&1; then
+  (cd .. && zip -q -r dist/caotun-windows.zip dist/caotun.exe dist/windows dist/client.conf dist/server.conf)
+elif command -v powershell >/dev/null 2>&1; then
+  (cd .. && powershell -NoProfile -Command "Compress-Archive -Force -Path 'dist\caotun.exe','dist\windows','dist\client.conf','dist\server.conf' -DestinationPath 'dist\caotun-windows.zip'")
+else
+  echo "跳过 windows zip（缺 zip 命令，可手动打包）"
+fi
 
 ls -la ../dist/ | awk '{print $5, $9}'
