@@ -1,0 +1,37 @@
+# 推送 v* 标签时自动构建三平台并发布 GitHub Release
+# 用法: git tag v1.0.0 && git push origin v1.0.0
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/go.mod
+
+      - name: 构建
+        run: sh scripts/shell/build.sh
+
+      - name: 组装 Release 包
+        working-directory: dist
+        run: |
+          tar -czf caotun-linux.tar.gz caotun_linux shell server.conf client.conf
+          zip -q -r caotun-windows.zip caotun.exe windows client.conf server.conf
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/caotun-linux.tar.gz
+            dist/caotun-windows.zip

@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>caotun 管理面板</title>
+<style>
+:root {
+  --bg:#f3f4f8; --card:#fff; --bd:#e3e6ec; --fg:#1c2230; --fg2:#68718a;
+  --pri:#3b6ef5; --pri2:#2f5bd8; --pri-soft:#e8eeff;
+  --ok:#18a058; --ok-soft:#e6f7ef; --bad:#d93025; --bad-soft:#fdecec;
+  --mono:Consolas,Menlo,monospace;
+  --shadow:0 1px 3px rgba(16,24,40,.08),0 4px 14px rgba(16,24,40,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#14161b; --card:#1d2027; --bd:#2c303a; --fg:#e8eaf0; --fg2:#8b93a7;
+    --pri:#5b8aff; --pri2:#7ba1ff; --pri-soft:#232c42;
+    --ok:#34c37a; --ok-soft:#17301f; --bad:#ff6b60; --bad-soft:#3a2020;
+    --shadow:0 1px 3px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.35);
+  }
+}
+* { box-sizing:border-box; }
+body { margin:0; padding:0 0 40px; font:14px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--fg); }
+.wrap { max-width:1080px; margin:0 auto; padding:0 20px; }
+header { background:linear-gradient(120deg,#3b6ef5,#2f5bd8); color:#fff; padding:26px 0 58px; }
+header .wrap { display:flex; align-items:center; gap:14px; }
+.logo { width:42px; height:42px; border-radius:12px; background:rgba(255,255,255,.18); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:17px; }
+header h1 { font-size:19px; margin:0; }
+header .sub { font-size:12px; opacity:.85; margin-top:2px; }
+header .grow { flex:1; }
+.badge { font-size:12px; padding:5px 14px; border-radius:999px; background:rgba(255,255,255,.18); display:flex; align-items:center; gap:7px; }
+.badge .dot { width:8px; height:8px; border-radius:50%; background:#ffd7d3; }
+.badge.on .dot { background:#7dffb8; animation:pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:-36px; }
+.card { background:var(--card); border:1px solid var(--bd); border-radius:14px; padding:18px 20px; box-shadow:var(--shadow); }
+.card h2 { font-size:13px; margin:0 0 12px; color:var(--fg2); font-weight:600; letter-spacing:.5px; }
+.kv { display:flex; align-items:center; gap:10px; margin:7px 0; font-size:13.5px; }
+.kv b { min-width:76px; color:var(--fg2); font-weight:500; }
+.row { display:flex; align-items:center; gap:10px; margin:12px 0 2px; flex-wrap:wrap; }
+button { font:inherit; font-size:13.5px; padding:7px 18px; border-radius:8px; border:1px solid var(--bd); background:var(--card); color:var(--fg); cursor:pointer; transition:all .15s; }
+button:hover:not(:disabled) { border-color:var(--pri); color:var(--pri); }
+button.pri { background:var(--pri); border-color:var(--pri); color:#fff; }
+button.pri:hover:not(:disabled) { background:var(--pri2); color:#fff; }
+button.danger { color:var(--bad); border-color:var(--bad); background:var(--bad-soft); }
+button.danger:hover:not(:disabled) { background:var(--bad); color:#fff; }
+button:disabled { opacity:.45; cursor:not-allowed; }
+label { color:var(--fg2); margin-right:8px; }
+input, textarea { font:inherit; font-size:13.5px; padding:6px 10px; border:1px solid var(--bd); border-radius:8px; background:var(--bg); color:var(--fg); }
+input { width:200px; }
+input[type=radio] { width:auto; accent-color:var(--pri); }
+.modes { display:flex; gap:8px; flex-wrap:wrap; }
+.modes label { display:flex; align-items:center; gap:6px; border:1px solid var(--bd); border-radius:999px; padding:7px 14px; cursor:pointer; color:var(--fg); font-size:13.5px; margin:0; transition:all .15s; }
+.modes label:hover { border-color:var(--pri); }
+.modes label:has(input:checked) { border-color:var(--pri); background:var(--pri-soft); color:var(--pri); font-weight:600; }
+input:focus, textarea:focus { outline:none; border-color:var(--pri); box-shadow:0 0 0 3px var(--pri-soft); }
+textarea { flex:1; font:12px/1.6 var(--mono); resize:vertical; min-height:110px; }
+pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid var(--bd); border-radius:10px; font:12px/1.6 var(--mono); max-height:300px; overflow:auto; }
+.msg { min-height:20px; font-size:12.5px; color:var(--bad); }
+.muted { color:var(--fg2); font-size:12px; margin:8px 0 0; }
+.pill { font-size:12px; padding:2px 10px; border-radius:999px; }
+.pill.ok { background:var(--ok-soft); color:var(--ok); }
+.pill.off { background:var(--bad-soft); color:var(--bad); }
+.progress { height:8px; border-radius:999px; background:var(--bg); border:1px solid var(--bd); overflow:hidden; margin:6px 0 2px; }
+.progress i { display:block; height:100%; background:linear-gradient(90deg,#3b6ef5,#2f5bd8); border-radius:999px; transition:width .4s; }
+.progress i.hot { background:linear-gradient(90deg,#f59e0b,#ef4444); }
+.logcard { margin-top:16px; }
+@media (max-width:760px){ .grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="logo">tf</div>
+    <div class="grow">
+      <h1>caotun 隧道面板</h1>
+      <div class="sub" id="hdServer">-</div>
+    </div>
+    <div class="badge" id="hdBadge"><span class="dot"></span><span id="hdState">加载中</span></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="grid">
+    <div class="card">
+      <h2>客户端控制</h2>
+      <div class="kv"><b>本地代理</b><span id="stPort">-</span></div>
+      <div class="kv"><b>隧道地址</b><span id="stServer">-</span></div>
+      <div class="kv"><b>系统代理</b><span id="pxText"><span class="pill off">-</span></span></div>
+      <div class="row">
+        <button id="btnStart" class="pri">启动代理</button>
+        <button id="btnStop">停止</button>
+        <span id="stMsg" class="msg"></span>
+      </div>
+      <p class="muted">停止会同时还原系统代理；孤儿客户端会显示"待接管"，点启动即接管。</p>
+    </div>
+
+    <div class="card">
+      <h2>代理模式</h2>
+      <div class="modes">
+        <label><input type="radio" name="mode" value="pac"> pac · 白名单分流</label>
+        <label><input type="radio" name="mode" value="all"> all · 全局</label>
+        <label><input type="radio" name="mode" value="off"> off · 不接管</label>
+      </div>
+      <p class="muted">切换即时生效，不中断客户端（仅改变系统代理接管方式）。</p>
+    </div>
+
+    <div class="card">
+      <h2>接入模式</h2>
+      <div class="modes">
+        <label><input type="radio" name="access" value="direct"> 直连 · 443</label>
+        <label><input type="radio" name="access" value="ws"> CDN · WebSocket 8443</label>
+      </div>
+      <p class="muted">CDN 模式需域名先托管到 Cloudflare 并开橙云代理；切换需重启客户端（面板自动处理）。</p>
+      <details>
+        <summary style="cursor:pointer; font-size:12px; color:var(--fg2)">📖 两种接入模式的原理（点开阅读）</summary>
+        <div style="margin-top:10px; font-size:13px; line-height:1.8">
+          <p style="margin:6px 0"><b style="color:var(--ok)">直连模式（443 · 原生 TLS）</b></p>
+          <pre>浏览器 → PAC 判定 → 本地代理(21878) ── TLS隧道直达 ──→ 你的VPS(443) → 目标网站
+                        纯净二进制协议，中间没有任何第三方</pre>
+          <p class="muted" style="margin:2px 0 10px">链路最短、延迟最低。但域名的 DNS 解析直接暴露 VPS 真实 IP，
+          且防火墙能看到"你 ↔ VPS"之间存在持续加密大流量。因此直连域名必须保持<b>灰云（DNS only）</b>
+          ——灰云只做解析、不碰流量，私有协议才能直达。</p>
+
+          <p style="margin:6px 0"><b style="color:var(--pri)">CDN 模式（8443 · WebSocket over Cloudflare）</b></p>
+          <pre>浏览器 → PAC 判定 → 本地代理(21878) ── WebSocket帧(藏在HTTPS里) ──→ Cloudflare边缘节点 ──→ 你的VPS(8443) → 目标网站
+                                      ↑ 你和公网只接触CF的IP，VPS真实IP彻底隐藏 ↑</pre>
+          <p class="muted" style="margin:2px 0 10px">隧道字节被封装成 WebSocket 帧（普通网页长连接技术），外层是标准 HTTPS。
+          流量特征 = "访问一个普通网站的加密长连接"，且混入 Cloudflare 每天的海量正常流量中；
+          想封也只能封 CF（等于封掉半个互联网），所以 VPS IP 几乎无法被针对。代价：多一跳 CF，延迟略增。</p>
+
+          <p style="margin:6px 0"><b>为什么橙云域名不能直连、灰云域名不能 CDN？</b></p>
+          <p class="muted" style="margin:2px 0">橙云 = DNS 把域名解析到 CF，且 CF <b>强制七层代理</b>——它只认识 HTTP/WebSocket，
+          纯 TLS 私有隧道会在 CF 处被掐断，所以直连必须用灰云域名（解析直达 VPS）。
+          CDN 模式的 WebSocket 握手本身就是标准 HTTP 升级，CF 认识，所以橙云域名专门给它用。</p>
+
+          <p style="margin:6px 0"><b>使用建议</b>：</p>
+          <p class="muted" style="margin:2px 0">平时用 <b>CDN 模式</b>（IP 受保护、抗封锁）；CF 偶发抽风或维护时，
+          一键切<b>直连模式</b>应急。两个模式的服务端入口永远同时在线，切换只需几秒。</p>
+        </div>
+      </details>
+    </div>
+
+    <div class="card" style="grid-column:1/-1">
+      <h2>配置</h2>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px 18px; margin-bottom:12px">
+        <div class="kv" id="kvDirectAddr"><b>直连地址</b><input id="cfgDirectAddr" style="width:100%" placeholder="灰云域名/IP:443（当前模式使用）"></div>
+      <div class="kv" id="kvCdAddr" style="display:none"><b>CDN地址</b><input id="cfgCdAddr" style="width:100%" placeholder="橙云域名:8443（当前模式使用）"></div>
+        <div class="kv"><b>证书主域</b><input id="cfgDomain" style="width:100%" placeholder="如 example.com（通配主域+全部子域）"></div>
+        <div class="kv"><b>本地端口</b><input id="cfgLocalPort" style="width:100%"></div>
+        <div class="kv"><b>流量配额</b><input id="cfgMaxGB" style="width:100%"></div>
+        <div class="kv"><b>周期天数</b><input id="cfgQuotaDays" style="width:100%"></div>
+        <div class="kv"><b>认证密码</b><span style="display:flex;gap:6px"><input id="cfgAuthPassword" type="password" style="flex:1;min-width:0" placeholder="必填，需与服务端一致"><button id="btnPassEye">显示</button><button id="btnPassRotate" title="服务端生成随机新密码并热生效，面板自动重启客户端">轮换</button></span></div>
+      </div>
+      <div class="kv" style="align-items:flex-start"><b style="margin-top:6px">代理域名</b>
+        <textarea id="cfgDomains" rows="8" placeholder="每行一个域名后缀，如 github.com"></textarea>
+      </div>
+      <p class="muted">pac 模式下仅清单内域名走隧道，其余直连；保存后立即重建 PAC。认证密码需与服务端一致，点「轮换」让服务端生成随机新密码并热生效（自动重启客户端）。证书主域仅用于 PAC 绕行，服务端证书域以其启动参数为准。</p>
+      <div class="row"><button id="btnSaveCfg" class="pri">保存配置</button><span id="cfgMsg" class="msg"></span></div>
+    </div>
+
+    <div class="card">
+      <h2>服务器流量</h2>
+      <div class="kv"><b>本周期已用</b><span id="srvUsed">点击下方按钮查询</span></div>
+      <div class="progress"><i id="srvBar" style="width:0%"></i></div>
+      <div class="kv"><b>配额</b><span id="srvQuota">-</span></div>
+      <div class="kv"><b>周期</b><span id="srvWindow">-</span></div>
+      <div class="row">
+        <button id="btnSrvQuery">查询流量</button>
+        <span id="srvMsg" class="msg"></span>
+      </div>
+      <p class="muted">流量由面板经服务端管理 API 读取。证书重签、密码轮换也由服务端本地执行（无需 SSH）；服务端端口/配额等启动参数改动需登录服务器改配置后重启服务端。</p>
+    </div>
+
+    <div class="card">
+      <h2>服务端证书</h2>
+      <div class="kv"><b>签发者</b><span id="certIssuer">-</span></div>
+      <div class="kv"><b>覆盖域名</b><span id="certNames">-</span></div>
+      <div class="kv"><b>过期时间</b><span id="certNotAfter">-</span></div>
+      <div class="kv"><b>剩余</b><span id="certLeft">-</span></div>
+      <div class="row">
+        <button id="btnCertQuery">查询证书</button>
+        <span id="certMsg" class="msg"></span>
+      </div>
+      <p class="muted">显示服务端正在使用的证书（正式/自签兜底）与有效期。证书由服务器上的定时脚本（issue-cert.sh）签发续期，服务端检测到文件变化会自动热加载，无需重启。</p>
+    </div>
+
+    <div class="card">
+      <h2>说明</h2>
+      <p class="muted" style="margin-top:0">· 服务器 IP 与局域网地址自动直连，不经过隧道<br>
+      · 密码由用户在"配置"卡自设（与服务端一致）；「轮换」经服务端管理 API 热更新双端<br>
+      · 认证失败过多会触发服务端封禁 IP（管理 API 同样计入，防爆破）<br>
+      · 日志写入 ~/.caotun/，自动轮转防止无限增长</p>
+    </div>
+  </div>
+
+  <div class="card logcard">
+    <h2>客户端日志（最近 200 行 · 5 秒自动刷新 · 自动滚底）</h2>
+    <div class="row"><button id="btnLog">手动刷新</button></div>
+    <pre id="logBox">-</pre>
+  </div>
+</div>
+
+<script>
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || j.error) throw new Error(j.error || ('HTTP ' + res.status));
+  return j;
+}
+function $(id) { return document.getElementById(id); }
+function setMsg(id, text) { $(id).textContent = text; setTimeout(() => { $(id).textContent = ''; }, 5000); }
+function setPill(id, ok, onText, offText) {
+  $(id).innerHTML = '<span class="pill ' + (ok ? 'ok' : 'off') + '">' + (ok ? onText : offText) + '</span>';
+}
+
+async function loadStatus() {
+  try {
+    const s = await api('/api/status');
+    const b = $('hdBadge');
+    b.className = 'badge' + (s.running ? ' on' : '');
+    $('hdState').textContent = s.running ? (s.takeover ? '运行中 · 待接管' : '运行中') : '已停止';
+    $('hdServer').textContent = '隧道 ' + s.server + ' · 本地 127.0.0.1:' + s.localPort;
+    $('stPort').textContent = '127.0.0.1:' + s.localPort;
+    $('stServer').textContent = s.server + (s.wsMode ? '（WebSocket）' : '（直连）');
+    setPill('pxText', s.proxyOn, '已接管（' + s.mode + '）', '未接管');
+    $('btnStart').disabled = s.running && !s.takeover;
+    $('btnStop').disabled = !s.running;
+  } catch (e) {
+    $('hdState').textContent = '面板不可达';
+  }
+}
+
+let logStick = true;
+async function loadLog() {
+  try {
+    const j = await api('/api/log?n=200');
+    const box = $('logBox');
+    logStick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+    box.textContent = j.lines.length ? j.lines.join('\n') : '（暂无日志）';
+    if (logStick) box.scrollTop = box.scrollHeight;
+  } catch (e) {}
+}
+
+async function loadConfig() {
+  try {
+    const c = await api('/api/config');
+    $('cfgDirectAddr').value = c.directAddr;
+    $('cfgCdAddr').value = c.cdAddr;
+    $('cfgLocalPort').value = c.localPort;
+    $('cfgMaxGB').value = c.maxGB;
+    $('cfgQuotaDays').value = c.quotaDays;
+    $('cfgDomain').value = c.domain || '';
+    $('cfgAuthPassword').value = c.authPassword || '';
+    document.querySelectorAll('input[name=access]').forEach(r => { r.checked = (r.value === 'ws') === c.wsMode; });
+    syncAddrVis(c.wsMode);
+    $('cfgDomains').value = (c.proxyDomains || []).join('\n');
+    document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === c.mode; });
+  } catch (e) {}
+}
+
+$('btnStart').onclick = async () => {
+  try { await api('/api/start', {method:'POST'}); } catch (e) { setMsg('stMsg', e.message); }
+  loadStatus();
+};
+$('btnStop').onclick = async () => {
+  try { await api('/api/stop', {method:'POST'}); } catch (e) { setMsg('stMsg', e.message); }
+  loadStatus();
+};
+document.querySelectorAll('input[name=mode]').forEach(r => {
+  r.onchange = async () => {
+    try { await api('/api/mode', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode: r.value})}); }
+    catch (e) { setMsg('stMsg', e.message); }
+    loadStatus();
+  };
+});
+async function saveConfig() {
+  try {
+    await api('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+      directAddr: $('cfgDirectAddr').value,
+      cdAddr: $('cfgCdAddr').value,
+      localPort: $('cfgLocalPort').value,
+      maxGB: parseFloat($('cfgMaxGB').value) || 0,
+      quotaDays: parseInt($('cfgQuotaDays').value) || 0,
+      authPassword: $('cfgAuthPassword').value,
+      domain: $('cfgDomain').value,
+      wsMode: (document.querySelector('input[name=access]:checked') || {}).value === 'ws',
+      proxyDomains: $('cfgDomains').value.split('\n').map(s => s.trim()).filter(Boolean),
+      mode: (document.querySelector('input[name=mode]:checked') || {}).value || 'pac'
+    })});
+    setMsg('cfgMsg', '已保存');
+    setTimeout(() => { $('cfgMsg').textContent = ''; }, 3000);
+  } catch (e) { setMsg('cfgMsg', e.message); }
+  loadStatus();
+}
+$('btnSaveCfg').onclick = saveConfig;
+$('btnPassEye').onclick = () => {
+  const i = $('cfgAuthPassword');
+  const show = i.type === 'password';
+  i.type = show ? 'text' : 'password';
+  $('btnPassEye').textContent = show ? '隐藏' : '显示';
+};
+// 接入模式切换：配置卡只显示当前模式使用的地址
+function syncAddrVis(wsMode) {
+  $('kvDirectAddr').style.display = wsMode ? 'none' : '';
+  $('kvCdAddr').style.display = wsMode ? '' : 'none';
+}
+document.querySelectorAll('input[name=access]').forEach(r => {
+  r.onchange = () => {
+    syncAddrVis(r.value === 'ws');
+    saveConfig(); // 接入模式点选立即生效（面板自动重启客户端）
+  };
+});
+$('btnSrvQuery').onclick = async () => {
+  $('srvUsed').textContent = '查询中...';
+  try {
+    const s = await api('/api/server');
+    $('srvUsed').textContent = s.usedGB.toFixed(2) + ' GB';
+    $('srvQuota').textContent = s.maxGB + ' GB / ' + s.quotaDays + ' 天';
+    $('srvWindow').textContent = s.quotaDays > 0 ? ('起始 ' + s.windowStart + ' · 剩 ' + s.daysLeft + ' 天') : '不限周期';
+    const pct = s.maxGB > 0 ? Math.min(100, s.usedGB / s.maxGB * 100) : 0;
+    const bar = $('srvBar');
+    bar.style.width = pct + '%';
+    bar.className = pct > 80 ? 'hot' : '';
+  } catch (e) { $('srvUsed').textContent = '查询失败'; setMsg('srvMsg', e.message); }
+};
+// ---- 服务端证书与密码 ----
+async function loadCert() {
+  try {
+    const c = await api('/api/cert');
+    $('certIssuer').textContent = c.issuer;
+    $('certNames').textContent = (c.dnsNames || []).join('、') || c.subject;
+    $('certNotAfter').textContent = c.notAfter;
+    if (c.daysLeft < 0) { setPill('certLeft', false, '已过期', '已过期'); }
+    else { setPill('certLeft', c.daysLeft > 15, '剩 ' + c.daysLeft + ' 天', '仅剩 ' + c.daysLeft + ' 天'); }
+  } catch (e) {
+    $('certIssuer').textContent = '-';
+    setPill('certLeft', false, '-', '查询失败');
+    setMsg('certMsg', e.message);
+  }
+}
+$('btnCertQuery').onclick = loadCert;
+$('btnPassRotate').onclick = async () => {
+  if (!confirm('轮换服务端密码？服务端将生成随机新密码并立即生效，面板自动重启客户端。')) return;
+  $('btnPassRotate').disabled = true;
+  try {
+    const j = await api('/api/pass/rotate', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
+    $('cfgAuthPassword').value = j.password;
+    setMsg('cfgMsg', '已轮换，客户端已重启');
+  } catch (e) { setMsg('cfgMsg', e.message); }
+  $('btnPassRotate').disabled = false;
+  loadStatus();
+};
+$('btnLog').onclick = loadLog;
+
+loadStatus(); loadConfig(); loadLog(); loadCert();
+setInterval(loadStatus, 2000);
+setInterval(loadLog, 5000);
+</script>
+</body>
+</html>
