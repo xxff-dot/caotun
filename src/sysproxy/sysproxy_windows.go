@@ -192,8 +192,8 @@ func restoreProxy(h syscall.Handle, b proxyBackup) {
 }
 
 // ApplyPAC PAC 分流模式(白名单): AutoConfigURL 指向本地 PAC 服务，仅清单内域名走代理；服务器各域名/IP 永远直连
-func ApplyPAC(proxyAddr string, domains []string, bypassHosts []string) func() {
-	startPACServer(proxyAddr, domains, bypassHosts)
+func ApplyPAC(proxyAddr string, domains []string, ips []string, bypassHosts []string) func() {
+	startPACServer(proxyAddr, domains, ips, bypassHosts)
 	h, err := regOpen(inetKeyPath)
 	if err != nil {
 		log.Fatal(err)

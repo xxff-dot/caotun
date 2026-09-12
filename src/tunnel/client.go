@@ -28,7 +28,7 @@ import (
 // ==================== 客户端 ====================
 
 // Run 客户端主入口：本地代理监听 + 系统代理接管 + 信号处理
-func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pacDomains []string, useWS bool) {
+func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pacDomains, pacIPs []string, useWS bool) {
 	if serverAddr == "" {
 		log.Fatal("client 模式必须指定 -server 服务器地址")
 	}
@@ -55,7 +55,7 @@ func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pa
 	bypassHosts := []string{protocol.ServerHost(serverAddr)}
 	switch sysMode {
 	case "pac":
-		undo = sysproxy.ApplyPAC(proxyAddr, pacDomains, bypassHosts)
+		undo = sysproxy.ApplyPAC(proxyAddr, pacDomains, pacIPs, bypassHosts)
 		log.Printf("系统代理已设为 PAC 白名单分流（仅配置域名走隧道，其余直连）")
 	case "all":
 		undo = sysproxy.ApplyAll(proxyAddr, bypassHosts)

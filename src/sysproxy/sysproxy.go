@@ -24,8 +24,8 @@ func PACURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%s/proxy.pac?v=%d", PACPort, pacVersion)
 }
 
-func startPACServer(proxyAddr string, domains []string, bypassHosts []string) {
-	key := proxyAddr + "|" + strings.Join(bypassHosts, ";") + "|" + strings.Join(domains, ",")
+func startPACServer(proxyAddr string, domains []string, ips []string, bypassHosts []string) {
+	key := proxyAddr + "|" + strings.Join(bypassHosts, ";") + "|" + strings.Join(domains, ",") + "|" + strings.Join(ips, ",")
 	if pacServing == key {
 		return
 	}
@@ -35,7 +35,7 @@ func startPACServer(proxyAddr string, domains []string, bypassHosts []string) {
 		pacServing = ""
 	}
 	pacVersion++
-	pac := buildPAC(proxyAddr, domains, bypassHosts)
+	pac := buildPAC(proxyAddr, domains, ips, bypassHosts)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/proxy.pac", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
@@ -53,11 +53,16 @@ func startPACServer(proxyAddr string, domains []string, bypassHosts []string) {
 }
 
 // buildPAC 生成 PAC 脚本。注意: PAC 运行在老式 JScript 引擎，不能用 ES6 的 endsWith
-func buildPAC(proxyAddr string, domains []string, bypassHosts []string) string {
+func buildPAC(proxyAddr string, domains []string, ips []string, bypassHosts []string) string {
 	var items []string
 	for _, b := range bypassHosts { // 服务器各入口地址直连，防止绕地球一圈再连回来
 		if b != "" {
 			items = append(items, fmt.Sprintf("  if (h == %q) return \"DIRECT\";\n", b))
+		}
+	}
+	for _, ip := range ips { // 指定 IP 走隧道（精确或 * 通配），在 bypass 之后、域名之前
+		if ip != "" {
+			items = append(items, fmt.Sprintf("  if (shExpMatch(h, %q)) return %q;\n", strings.ToLower(ip), "PROXY "+proxyAddr))
 		}
 	}
 	for _, s := range domains {

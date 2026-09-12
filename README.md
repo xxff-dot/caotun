@@ -178,6 +178,7 @@ sh scripts/shell/stop-client.sh    # 停止（优先在 start 窗口按 Ctrl+C�
 - 面板仅绑定 127.0.0.1，所有 API 校验 Origin/Host 防 CSRF；认证密码由用户在"配置"卡自设（必填，与服务端一致），同时作为调用服务端管理 API 的凭证
 - 面板强杀后孤儿客户端：重开面板会显示"已运行(待接管)"，点启动即接管
 - PAC 白名单默认 100+ 常用国外域名（[src/web/web.go](src/web/web.go) `DefaultProxyDomains`：Google/GitHub/AI/开发者生态等），面板可增删，保存即生效
+- **代理 IP 清单**：需要指定 IP（而非域名）走隧道时，在面板"配置"卡「代理 IP」里每行填一个，支持 `*` 通配（如 `52.10.*`），保存即重建 PAC 生效；内网段（127/192.168/10）始终直连不代理
 
 ### HTTP API（面板，仅本机）
 
@@ -283,7 +284,7 @@ sh ~/caotun/issue-cert.sh direct.example.com --http
 
 | 文件 | 归属 | 说明 |
 |---|---|---|
-| `web.json` | 面板 | 面板配置（双线路地址、认证密码、PAC 白名单等） |
+| `web.json` | 面板 | 面板配置（双线路地址、认证密码、PAC 白名单与代理 IP 清单等） |
 | `auth` | 服务端/客户端 | **认证密码文件（两端同路径，两端必须一致）**：服务端首次启动自动生成随机密码写在此处并日志提示；之后重启默认沿用（`-rotate-pass` 轮换）；客户端由 start-client.sh 或面板写入用户设置的密码 |
 | `client.pid` | 面板 | 客户端子进程 PID（接管孤儿进程用） |
 | `fingerprint.txt` | 客户端 | TOFU 服务端证书指纹；报"指纹变化"且确认是服务端换证书后删除此文件重试 |

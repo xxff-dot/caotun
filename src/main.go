@@ -133,6 +133,7 @@ func clientCmd(args []string) {
 	pacPort := fs.String("pac-port", "21879", "PAC 脚本下载端口（仅 -sysproxy pac 用，供系统拉取分流脚本；代理流量不走此端口）")
 	insecure := fs.Bool("insecure", false, "跳过服务端证书校验（不建议）")
 	useWS := fs.Bool("ws", false, "走 WebSocket 传输（CDN 模式，对接服务端 -ws-port 端口）")
+	ips := fs.String("ips", "", "PAC 模式下额外走隧道的 IP（逗号分隔，支持 * 通配，如 1.2.3.4 或 52.10.*）")
 	fs.Parse(args)
 
 	sysproxy.PACPort = *pacPort
@@ -146,7 +147,7 @@ func clientCmd(args []string) {
 			log.Fatalf("密码文件为空: %s", authPath)
 		}
 	}
-	tunnel.Run(*serverAddr, net.JoinHostPort(*lhost, *lport), *auth, *sysMode, *insecure, dir, web.DefaultProxyDomains(), *useWS)
+	tunnel.Run(*serverAddr, net.JoinHostPort(*lhost, *lport), *auth, *sysMode, *insecure, dir, web.DefaultProxyDomains(), strings.Split(*ips, ","), *useWS)
 }
 
 // ==================== web ====================

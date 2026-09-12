@@ -59,6 +59,9 @@ textarea { flex:1; font:12px/1.6 var(--mono); resize:vertical; min-height:110px;
 pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid var(--bd); border-radius:10px; font:12px/1.6 var(--mono); max-height:300px; overflow:auto; }
 .msg { min-height:20px; font-size:12.5px; color:var(--bad); }
 .muted { color:var(--fg2); font-size:12px; margin:8px 0 0; }
+.tip { position:relative; display:inline-block; width:15px; height:15px; line-height:15px; text-align:center; border-radius:50%; background:var(--pri-soft); color:var(--pri); font-size:11px; cursor:help; margin-left:4px; vertical-align:1px; }
+.tip .ttip { display:none; position:absolute; left:50%; transform:translateX(-50%); bottom:24px; width:230px; padding:8px 10px; background:var(--fg); color:var(--card); border-radius:8px; font-size:12px; font-weight:400; line-height:1.6; text-align:left; z-index:9; box-shadow:var(--shadow); }
+.tip:hover .ttip { display:block; }
 .pill { font-size:12px; padding:2px 10px; border-radius:999px; }
 .pill.ok { background:var(--ok-soft); color:var(--ok); }
 .pill.off { background:var(--bad-soft); color:var(--bad); }
@@ -145,18 +148,21 @@ pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid
     <div class="card" style="grid-column:1/-1">
       <h2>配置</h2>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px 18px; margin-bottom:12px">
-        <div class="kv" id="kvDirectAddr"><b>直连地址</b><input id="cfgDirectAddr" style="width:100%" placeholder="灰云域名/IP:443（当前模式使用）"></div>
-      <div class="kv" id="kvCdAddr" style="display:none"><b>CDN地址</b><input id="cfgCdAddr" style="width:100%" placeholder="橙云域名:8443（当前模式使用）"></div>
-        <div class="kv"><b>证书主域</b><input id="cfgDomain" style="width:100%" placeholder="如 example.com（通配主域+全部子域）"></div>
-        <div class="kv"><b>本地端口</b><input id="cfgLocalPort" style="width:100%"></div>
-        <div class="kv"><b>流量配额</b><input id="cfgMaxGB" style="width:100%"></div>
-        <div class="kv"><b>周期天数</b><input id="cfgQuotaDays" style="width:100%"></div>
-        <div class="kv"><b>认证密码</b><span style="display:flex;gap:6px"><input id="cfgAuthPassword" type="password" style="flex:1;min-width:0" placeholder="必填，需与服务端一致"><button id="btnPassEye">显示</button><button id="btnPassRotate" title="服务端生成随机新密码并热生效，面板自动重启客户端">轮换</button></span></div>
+        <div class="kv" id="kvDirectAddr"><b>直连地址<span class="tip">?<span class="ttip">灰云域名或服务器IP:443。DNS 直接解析到 VPS，不能开 Cloudflare 橙云（橙云会强制七层代理，纯 TLS 隧道会被掐断）。直连模式走这个地址。</span></span></b><input id="cfgDirectAddr" style="width:100%" placeholder="灰云域名/IP:443（当前模式使用）"></div>
+      <div class="kv" id="kvCdAddr" style="display:none"><b>CDN地址<span class="tip">?<span class="ttip">橙云域名:8443。域名需托管到 Cloudflare 并开启橙色云代理，流量封装成 WebSocket 混入 CF 正常流量，VPS 真实 IP 被隐藏、抗封锁，代价是多一跳延迟。</span></span></b><input id="cfgCdAddr" style="width:100%" placeholder="橙云域名:8443（当前模式使用）"></div>
+        <div class="kv"><b>证书主域<span class="tip">?<span class="ttip">仅用于 PAC 绕行：访问这个域名（及其子域）时不走隧道、直接连接。服务端实际签发证书的域名以服务器启动参数/issue-cert.sh 为准，这里改不会改变服务端证书。</span></span></b><input id="cfgDomain" style="width:100%" placeholder="如 example.com（通配主域+全部子域）"></div>
+        <div class="kv"><b>本地端口<span class="tip">?<span class="ttip">本机 SOCKS5/HTTP 代理监听端口（绑定 127.0.0.1），浏览器/应用把代理指向 127.0.0.1:此端口。面板会自动接管系统代理，一般不用改。</span></span></b><input id="cfgLocalPort" style="width:100%"></div>
+        <div class="kv"><b>流量配额<span class="tip">?<span class="ttip">仅用于面板显示"服务器流量"进度条。服务端真正的限额以其启动参数 -max-gb（server.conf 的 MAX_GB）为准，超限后服务端拒绝新隧道。</span></span></b><input id="cfgMaxGB" style="width:100%"></div>
+        <div class="kv"><b>周期天数<span class="tip">?<span class="ttip">流量统计周期天数，到期服务端自动清零重新计数。同样以服务端启动参数为准，这里仅用于显示剩余天数。</span></span></b><input id="cfgQuotaDays" style="width:100%"></div>
+        <div class="kv"><b>认证密码<span class="tip">?<span class="ttip">两端必须一致的认证密码，也是面板调服务端管理 API 的凭证。「轮换」让服务端生成随机新密码并热生效，本面板自动重启客户端。密码错误时隧道会连不上（客户端表现为 EOF）。</span></span></b><span style="display:flex;gap:6px"><input id="cfgAuthPassword" type="password" style="flex:1;min-width:0" placeholder="必填，需与服务端一致"><button id="btnPassEye">显示</button><button id="btnPassRotate" title="服务端生成随机新密码并热生效，面板自动重启客户端">轮换</button></span></div>
       </div>
-      <div class="kv" style="align-items:flex-start"><b style="margin-top:6px">代理域名</b>
+      <div class="kv" style="align-items:flex-start"><b style="margin-top:6px">代理域名<span class="tip">?<span class="ttip">PAC 白名单：只有这些后缀的域名走隧道，其余全部直连。每行一个后缀（如 github.com 匹配其所有子域）。保存立即重建 PAC 生效。</span></span></b>
         <textarea id="cfgDomains" rows="8" placeholder="每行一个域名后缀，如 github.com"></textarea>
       </div>
-      <p class="muted">pac 模式下仅清单内域名走隧道，其余直连；保存后立即重建 PAC。认证密码需与服务端一致，点「轮换」让服务端生成随机新密码并热生效（自动重启客户端）。证书主域仅用于 PAC 绕行，服务端证书域以其启动参数为准。</p>
+      <div class="kv" style="align-items:flex-start"><b style="margin-top:6px">代理 IP<span class="tip">?<span class="ttip">额外指定走隧道的裸 IP，每行一个，支持 * 通配（如 1.2.3.4 或 52.10.*）。内网段（127/192.168/10）设计上永远直连，不受此清单影响。</span></span></b>
+        <textarea id="cfgIps" rows="3" placeholder="每行一个，需要走隧道的 IP，支持 * 通配（如 1.2.3.4 或 52.10.*）。留空 = 仅白名单域名走隧道"></textarea>
+      </div>
+      <p class="muted">pac 模式下仅清单内域名与「代理 IP」走隧道，其余直连；保存后立即重建 PAC。认证密码需与服务端一致，点「轮换」让服务端生成随机新密码并热生效（自动重启客户端）。证书主域仅用于 PAC 绕行，服务端证书域以其启动参数为准。</p>
       <div class="row"><button id="btnSaveCfg" class="pri">保存配置</button><span id="cfgMsg" class="msg"></span></div>
     </div>
 
@@ -175,10 +181,10 @@ pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid
 
     <div class="card">
       <h2>服务端证书</h2>
-      <div class="kv"><b>签发者</b><span id="certIssuer">-</span></div>
-      <div class="kv"><b>覆盖域名</b><span id="certNames">-</span></div>
-      <div class="kv"><b>过期时间</b><span id="certNotAfter">-</span></div>
-      <div class="kv"><b>剩余</b><span id="certLeft">-</span></div>
+      <div class="kv"><b>签发者<span class="tip">?<span class="ttip">证书颁发机构。Let's Encrypt = 免费 ACME 真证书（浏览器/系统默认信任）；caotun = 自签兜底证书（客户端走 TOFU 指纹校验，安全性等同）。</span></span></b><span id="certIssuer">-</span></div>
+      <div class="kv"><b>覆盖域名<span class="tip">?<span class="ttip">证书保护的域名清单。客户端访问的直连/CDN 域名必须在此清单内（或走 TOFU）。</span></span></b><span id="certNames">-</span></div>
+      <div class="kv"><b>过期时间<span class="tip">?<span class="ttip">证书失效时刻。到期后客户端将无法建立新连接，需在服务器上重跑 issue-cert.sh 续期（acme.sh 的每日 cron 也会自动续）。</span></span></b><span id="certNotAfter">-</span></div>
+      <div class="kv"><b>剩余<span class="tip">?<span class="ttip">距过期的天数。少于 15 天变黄提醒；acme.sh 的 cron 会在到期前自动续期。</span></span></b><span id="certLeft">-</span></div>
       <div class="row">
         <button id="btnCertQuery">查询证书</button>
         <span id="certMsg" class="msg"></span>
@@ -188,7 +194,7 @@ pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid
 
     <div class="card">
       <h2>说明</h2>
-      <p class="muted" style="margin-top:0">· 服务器 IP 与局域网地址自动直连，不经过隧道<br>
+      <p class="muted" style="margin-top:0">· 访问代理服务器自身的域名/IP，或 192.168.*、10.*、127.* 等内网地址时不走隧道、直接连接：连代理自己不该再绕一圈代理；路由器/NAS 等内网设备也只有直连才通<br>
       · 密码由用户在"配置"卡自设（与服务端一致）；「轮换」经服务端管理 API 热更新双端<br>
       · 认证失败过多会触发服务端封禁 IP（管理 API 同样计入，防爆破）<br>
       · 日志写入 ~/.caotun/，自动轮转防止无限增长</p>
@@ -256,6 +262,7 @@ async function loadConfig() {
     document.querySelectorAll('input[name=access]').forEach(r => { r.checked = (r.value === 'ws') === c.wsMode; });
     syncAddrVis(c.wsMode);
     $('cfgDomains').value = (c.proxyDomains || []).join('\n');
+    $('cfgIps').value = (c.proxyIps || []).join('\n');
     document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === c.mode; });
   } catch (e) {}
 }
@@ -287,6 +294,7 @@ async function saveConfig() {
       domain: $('cfgDomain').value,
       wsMode: (document.querySelector('input[name=access]:checked') || {}).value === 'ws',
       proxyDomains: $('cfgDomains').value.split('\n').map(s => s.trim()).filter(Boolean),
+      proxyIps: $('cfgIps').value.split('\n').map(s => s.trim()).filter(Boolean),
       mode: (document.querySelector('input[name=mode]:checked') || {}).value || 'pac'
     })});
     setMsg('cfgMsg', '已保存');
@@ -312,7 +320,7 @@ document.querySelectorAll('input[name=access]').forEach(r => {
     saveConfig(); // 接入模式点选立即生效（面板自动重启客户端）
   };
 });
-$('btnSrvQuery').onclick = async () => {
+async function loadSrv() {
   $('srvUsed').textContent = '查询中...';
   try {
     const s = await api('/api/server');
@@ -324,16 +332,28 @@ $('btnSrvQuery').onclick = async () => {
     bar.style.width = pct + '%';
     bar.className = pct > 80 ? 'hot' : '';
   } catch (e) { $('srvUsed').textContent = '查询失败'; setMsg('srvMsg', e.message); }
-};
+}
+$('btnSrvQuery').onclick = loadSrv;
 // ---- 服务端证书与密码 ----
 async function loadCert() {
   try {
     const c = await api('/api/cert');
-    $('certIssuer').textContent = c.issuer;
-    $('certNames').textContent = (c.dnsNames || []).join('、') || c.subject;
-    $('certNotAfter').textContent = c.notAfter;
-    if (c.daysLeft < 0) { setPill('certLeft', false, '已过期', '已过期'); }
-    else { setPill('certLeft', c.daysLeft > 15, '剩 ' + c.daysLeft + ' 天', '仅剩 ' + c.daysLeft + ' 天'); }
+    const list = c.certs || [];
+    if (!list.length) {
+      $('certIssuer').textContent = '-';
+      $('certNames').textContent = '-';
+      $('certNotAfter').textContent = '-';
+      setPill('certLeft', false, '-', '无证书');
+      return;
+    }
+    // 展示主证书（正式证书优先，自签兜底次之），其余张数附注
+    const main = list.find(x => x.name !== 'cert.pem') || list[0];
+    $('certIssuer').textContent = main.issuer;
+    $('certNames').textContent = (main.dnsNames || []).join('、') || main.name;
+    $('certNotAfter').textContent = main.notAfter;
+    if (main.daysLeft < 0) { setPill('certLeft', false, '已过期', '已过期'); }
+    else { setPill('certLeft', main.daysLeft > 15, '剩 ' + main.daysLeft + ' 天', '仅剩 ' + main.daysLeft + ' 天'); }
+    if (list.length > 1) { $('certNames').textContent += '（另有 ' + (list.length - 1) + ' 张）'; }
   } catch (e) {
     $('certIssuer').textContent = '-';
     setPill('certLeft', false, '-', '查询失败');
@@ -354,7 +374,7 @@ $('btnPassRotate').onclick = async () => {
 };
 $('btnLog').onclick = loadLog;
 
-loadStatus(); loadConfig(); loadLog(); loadCert();
+loadStatus(); loadConfig(); loadLog(); loadCert(); loadSrv();
 setInterval(loadStatus, 2000);
 setInterval(loadLog, 5000);
 </script>

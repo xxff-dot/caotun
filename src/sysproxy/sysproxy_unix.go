@@ -21,8 +21,8 @@ import (
 func HideWindowCmd(*exec.Cmd) {}
 
 // ApplyPAC PAC 白名单模式
-func ApplyPAC(proxyAddr string, domains []string, bypassHosts []string) func() {
-	startPACServer(proxyAddr, domains, bypassHosts)
+func ApplyPAC(proxyAddr string, domains []string, ips []string, bypassHosts []string) func() {
+	startPACServer(proxyAddr, domains, ips, bypassHosts)
 	switch runtime.GOOS {
 	case "darwin":
 		return applyMac(func(svc string) bool {

@@ -43,6 +43,7 @@ type webConfig struct {
 	Domain       string   `json:"domain"`       // 证书主域（PAC 绕行用；服务端证书域以其启动参数为准）
 	WsMode       bool     `json:"wsMode"`       // true = 走 CDN 地址(WebSocket)；false = 走直连地址
 	ProxyDomains []string `json:"proxyDomains"` // PAC 白名单：仅这些后缀走隧道，其余直连
+	ProxyIps     []string `json:"proxyIps"`     // PAC 额外走隧道的 IP（精确或 * 通配；内网段除外）
 }
 
 // DefaultProxyDomains 默认走隧道的域名后缀（面板"配置"卡可增删），覆盖常用国外站点
@@ -252,7 +253,7 @@ func (m *webManager) applyProxy(mode string) {
 	}
 	switch mode {
 	case "pac":
-		m.undoFunc = sysproxy.ApplyPAC(m.proxyAddr(), m.cfg.ProxyDomains, bypassHosts)
+		m.undoFunc = sysproxy.ApplyPAC(m.proxyAddr(), m.cfg.ProxyDomains, m.cfg.ProxyIps, bypassHosts)
 	case "all":
 		m.undoFunc = sysproxy.ApplyAll(m.proxyAddr(), bypassHosts)
 	}
