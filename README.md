@@ -244,6 +244,7 @@ sh ~/caotun/issue-cert.sh direct.example.com --http
 | `-auth` | 认证密码；不指定则读 `~/.caotun/auth` |
 | `-sysproxy` | off / pac(白名单分流) / all(全局)，退出自动恢复 |
 | `-pac-port` | PAC 脚本下载端口（默认 21879；仅 pac 模式用，代理流量不走此端口） |
+| `-ips` | pac 模式下额外走隧道的 IP（逗号分隔，支持 `*` 通配，如 `1.2.3.4` 或 `52.10.*`） |
 | `-ws` | 走 WebSocket/CDN 传输（对接服务端 `-ws-port`） |
 | `-insecure` | 跳过证书校验（不建议，仅调试） |
 
@@ -351,16 +352,16 @@ WantedBy=multi-user.target
 | 项 | 值 |
 |---|---|
 | 服务器 | `root@1.2.3.4`（海外 VPS） |
-| 服务端二进制 | `/root/caotun` |
+| 程序目录 | `~/caotun/`（二进制 + 启停脚本 + server.conf） |
 | 域名/端口 | `direct.example.com:443`（直连 TLS）+ `cdn.example.com:8443`（CDN WS，CF 橙云） |
-| 证书 | 服务器上 `sh issue-cert.sh` 签发/自动续期（acme.sh）；面板可查看有效期 |
-| 认证密码 | 用户自设固定密码（面板"配置"卡）；`POST /_admin/pass` 或 `-r` 轮换 |
+| 证书 | 服务器上 `sh ~/caotun/issue-cert.sh` 签发/自动续期（acme.sh）；面板可查看有效期 |
+| 认证密码 | 首次启动自动生成（`~/.caotun/auth`）；面板「轮换」或 `POST /_admin/pass` 热轮换 |
 | 流量配额 | 20G / 30 天（计数存 `~/.caotun/traffic.txt`） |
-| 服务端启停 | `sh /root/start-caotun.sh [密码] [域名]` / `sh /root/stop-caotun.sh`（仓库副本在 `scripts/`） |
+| 服务端启停 | `sh ~/caotun/start-caotun.sh [密码]` / `sh ~/caotun/stop-caotun.sh`（仓库副本在 `scripts/`） |
 | 优化 | 服务器已开 BBR |
 
 **流量配额用完 / 想重置计数：**
 
 ```bash
-ssh root@1.2.3.4 'sh /root/stop-caotun.sh; rm -f /root/.caotun/traffic.txt; sh /root/start-caotun.sh'
+ssh root@1.2.3.4 'sh ~/caotun/stop-caotun.sh; rm -f ~/.caotun/traffic.txt; sh ~/caotun/start-caotun.sh'
 ```
