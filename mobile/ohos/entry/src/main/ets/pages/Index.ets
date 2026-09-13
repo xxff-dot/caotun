@@ -38,6 +38,7 @@ struct Index {
   @State running: boolean = false;
   @State lastErr: string = '';
   private lastStart: number = 0;
+  @State dnsInput: string = '';
   private transitionUntil: number = 0; // 启停过渡期:此间禁止心跳刷新抢状态
   private statusSub?: commonEventManager.CommonEventSubscriber;
 
@@ -81,6 +82,7 @@ struct Index {
     if (this.active >= 0) {
       await this.mirrorActive(store, 0);
     }
+    this.dnsInput = await store.get('dns', '223.5.5.5') as string;
     if (this.beatFresh()) {
       this.running = true;
       this.status = '已连接';
@@ -130,6 +132,18 @@ struct Index {
     } catch (e) {
       return false;
     }
+  }
+
+  /** 保存 DNS 上游设置(多个逗号分隔);重连后生效 */
+  private async saveDns(): Promise<void> {
+    const v = this.dnsInput.trim();
+    if (!v) {
+      return;
+    }
+    const store = await preferences.getPreferences(getContext(this), CFG_NAME);
+    await store.put('dns', v);
+    await store.flush();
+    this.lastErr = this.running ? 'DNS 已保存,断开重连后生效' : 'DNS 已保存';
   }
 
   private async refresh(): Promise<void> {
@@ -535,6 +549,27 @@ struct Index {
               Text('还没有服务器').fontSize(14).fontColor(C_SUB)
             }.width('100%').padding(24).borderRadius(14).backgroundColor(C_CARD)
           }
+
+          // DNS 设置
+          Column({ space: 6 }) {
+            Row({ space: 6 }) {
+              Text('DNS').fontSize(13).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
+              Text('多个逗号分隔,按序尝试').fontSize(10).fontColor(C_SUB)
+              Blank()
+              Text('保存').fontSize(12).fontColor(C_PRI)
+                .onClick(() => this.saveDns())
+            }.width('100%')
+            TextInput({ text: this.dnsInput, placeholder: '223.5.5.5' })
+              .height(38).borderRadius(8)
+              .onChange((v: string) => this.dnsInput = v)
+            Text('上游解析器:国内直连探测与隧道解析共用;改完断开重连生效')
+              .fontSize(10).fontColor(C_SUB)
+          }
+          .width('100%')
+          .padding(12)
+          .borderRadius(14)
+          .backgroundColor(C_CARD)
+          .shadow({ radius: 6, color: 'rgba(30,60,120,0.06)', offsetY: 2 })
 
           Text('选中的配置为当前线路 · 切换或修改后自动重连')
             .fontSize(11).fontColor(C_SUB)

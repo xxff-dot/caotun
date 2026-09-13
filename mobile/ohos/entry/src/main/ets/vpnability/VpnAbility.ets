@@ -19,6 +19,7 @@ interface CaotunConfig {
   pass: string;
   ws: boolean;
   dialIP: string;
+  dns: string;
 }
 
 /**
@@ -91,7 +92,7 @@ export default class VpnAbility extends VpnExtensionAbility {
       }
       const protectPath = this.context.filesDir + '/protect.sock';
       this.startProtectServer(conn, protectPath);
-      const code = tun.startTun(cfg.server, cfg.pass, dir, fd, TUN_MTU, cfg.ws ? 1 : 0, protectPath, cfg.dialIP, dir + '/cn_cidr.txt');
+      const code = tun.startTun(cfg.server, cfg.pass, dir, fd, TUN_MTU, cfg.ws ? 1 : 0, protectPath, cfg.dialIP, dir + '/cn_cidr.txt', cfg.dns);
       hilog.info(0x0000, TAG, 'startTun code=%{public}d', code);
       // 心跳状态写入 preferences:VPN 跑在独立进程,UI 进程读不到本进程的 Go 实例
       const store = await preferences.getPreferences(this.context, CFG_NAME);
@@ -174,7 +175,8 @@ private startProtectServer(vpnConn: vpnExtension.VpnConnection, path: string): v
     }
     const ws = await store.get('ws', false) as boolean;
     const dialIP = await store.get('dialip', '') as string;
-    return { server, pass, ws, dialIP };
+    const dns = await store.get('dns', '223.5.5.5') as string;
+    return { server, pass, ws, dialIP, dns };
   }
 
   async onDestroy(): Promise<void> {

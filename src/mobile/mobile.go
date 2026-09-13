@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 
 	"caotun/tun2sock"
@@ -28,7 +29,7 @@ var (
 )
 
 //export CaotunStartTun
-func CaotunStartTun(server, pass, dir *C.char, fd, mtu, useWS C.int, protectPath, dialIP, cnPath *C.char) C.int {
+func CaotunStartTun(server, pass, dir *C.char, fd, mtu, useWS C.int, protectPath, dialIP, cnPath, dnsList *C.char) C.int {
 	mu.Lock()
 	defer mu.Unlock()
 	if running {
@@ -37,6 +38,7 @@ func CaotunStartTun(server, pass, dir *C.char, fd, mtu, useWS C.int, protectPath
 	serverAddr, auth, dirS := C.GoString(server), C.GoString(pass), C.GoString(dir)
 	protectS, dialIPS := C.GoString(protectPath), C.GoString(dialIP)
 	cnPathS := C.GoString(cnPath)
+	dnsListS := C.GoString(dnsList)
 	os.MkdirAll(dirS, 0700) // TOFU 指纹文件所在目录
 	// 引擎日志落文件(hilog 采集不到 .so 的 stderr),供 hdc file recv 排查
 	if f, err := os.OpenFile(dirS+"/engine.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600); err == nil {
@@ -53,7 +55,8 @@ func CaotunStartTun(server, pass, dir *C.char, fd, mtu, useWS C.int, protectPath
 			MTU:      int(mtu),
 			Dial:     dial,
 			Direct:   direct,
-			CIDRPath: cnPathS, // CN 段表(VpnAbility 从 rawfile 拷到 cache)
+			CIDRPath: cnPathS,
+			DNS:      splitCSV(dnsListS), // CN 段表(VpnAbility 从 rawfile 拷到 cache)
 			Logf: func(f string, a ...any) {
 				msg := fmt.Sprintf(f, a...)
 				log.Printf(f, a...) // stderr 兜底
@@ -98,3 +101,14 @@ func CaotunLastError() *C.char {
 }
 
 func main() {}
+
+// splitCSV 逗号分隔字符串 → 去空白列表
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}

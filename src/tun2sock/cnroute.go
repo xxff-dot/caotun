@@ -85,3 +85,50 @@ func trimCnLine(s string) string {
 	}
 	return s
 }
+
+// hasCNAnswer 解析 DNS 应答中的 A 记录,任一 IP 命中 CN 段表即返回 true
+func hasCNAnswer(resp []byte, cn *CNMatcher) bool {
+	if cn == nil || len(resp) < 12 {
+		return false
+	}
+	qd := int(binary.BigEndian.Uint16(resp[4:6]))
+	an := int(binary.BigEndian.Uint16(resp[6:8]))
+	off := 12
+	skipName := func() bool { // 跳过(可能压缩指向的)域名
+		for {
+			if off >= len(resp) {
+				return false
+			}
+			l := int(resp[off])
+			off++
+			if l == 0 {
+				return true
+			}
+			if l&0xC0 != 0 { // 压缩指针(2 字节)
+				off++
+				return true
+			}
+			off += l
+		}
+	}
+	for i := 0; i < qd; i++ {
+		if !skipName() {
+			return false
+		}
+		off += 4
+	}
+	for i := 0; i < an && off+10 <= len(resp); i++ {
+		if !skipName() {
+			break
+		}
+		typ := binary.BigEndian.Uint16(resp[off : off+2])
+		rdlen := int(binary.BigEndian.Uint16(resp[off+8 : off+10]))
+		if typ == 1 && rdlen == 4 && off+10+4 <= len(resp) {
+			if cn.IsCN(net.IP(resp[off+10 : off+14])) {
+				return true
+			}
+		}
+		off += 10 + rdlen
+	}
+	return false
+}

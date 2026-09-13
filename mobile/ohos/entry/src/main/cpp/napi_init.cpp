@@ -5,7 +5,7 @@
 
 // libcaotun.so 导出的 C 接口（cgo //export）
 extern "C" {
-int CaotunStartTun(const char* server, const char* pass, const char* dir, int fd, int mtu, int useWS, const char* protectPath, const char* dialIP, const char* cnPath);
+int CaotunStartTun(const char* server, const char* pass, const char* dir, int fd, int mtu, int useWS, const char* protectPath, const char* dialIP, const char* cnPath, const char* dnsList);
 void CaotunStop(void);
 int CaotunRunning(void);
 char* CaotunLastError(void);
@@ -20,14 +20,14 @@ static bool GetStr(napi_env env, napi_value v, char* out, size_t cap) {
 }
 
 static napi_value StartTun(napi_env env, napi_callback_info info) {
-    size_t argc = 9;
-    napi_value args[9];
+    size_t argc = 10;
+    napi_value args[10];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     if (argc < 6) {
         napi_throw_error(env, nullptr, "startTun 需要 6 个参数");
         return nullptr;
     }
-    char server[512] = {0}, pass[256] = {0}, dir[512] = {0}, protectPath[512] = {0}, dialIP[64] = {0}, cnPath[512] = {0};
+    char server[512] = {0}, pass[256] = {0}, dir[512] = {0}, protectPath[512] = {0}, dialIP[64] = {0}, cnPath[512] = {0}, dnsList[256] = {0};
     int32_t fd = 0, mtu = 0, ws = 0;
     if (!GetStr(env, args[0], server, sizeof(server)) ||
         !GetStr(env, args[1], pass, sizeof(pass)) ||
@@ -37,11 +37,12 @@ static napi_value StartTun(napi_env env, napi_callback_info info) {
         napi_get_value_int32(env, args[5], &ws) != napi_ok ||
         !GetStr(env, args[6], protectPath, sizeof(protectPath)) ||
         !GetStr(env, args[7], dialIP, sizeof(dialIP)) ||
-        !GetStr(env, args[8], cnPath, sizeof(cnPath))) {
+        !GetStr(env, args[8], cnPath, sizeof(cnPath)) ||
+        !GetStr(env, args[9], dnsList, sizeof(dnsList))) {
         napi_throw_error(env, nullptr, "参数类型错误");
         return nullptr;
     }
-    int code = CaotunStartTun(server, pass, dir, fd, mtu, ws, protectPath, dialIP, cnPath);
+    int code = CaotunStartTun(server, pass, dir, fd, mtu, ws, protectPath, dialIP, cnPath, dnsList);
     napi_value res;
     napi_create_int32(env, code, &res);
     return res;

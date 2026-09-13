@@ -39,7 +39,8 @@ type Options struct {
 	FD, MTU  int
 	Dial     Dialer // 隧道拨号器:非 CN 目标走这里
 	Direct   Dialer // 直连拨号器(protect 后走物理网络):CN 目标走这里
-	CIDRPath string // 中国大陆 IPv4 段表文件;空 = 全部走隧道
+	CIDRPath string   // 中国大陆 IPv4 段表文件;空 = 全部走隧道
+	DNS      []string // 上游解析器列表(经隧道按序尝试);空 = 默认 8.8.8.8
 	Logf     func(string, ...any)
 }
 
@@ -55,6 +56,10 @@ func Serve(ctx context.Context, o Options) error {
 		logf = func(string, ...any) {}
 	}
 	tunFD, mtu := o.FD, o.MTU
+	dnss := o.DNS
+	if len(dnss) == 0 {
+		dnss = []string{"223.5.5.5"} // 默认阿里公共 DNS
+	}
 	cn := LoadCNMatcher(o.CIDRPath)
 	if cn != nil {
 		logf("CN 段表已加载:%d 段走直连", len(cn.ranges))
@@ -63,7 +68,7 @@ func Serve(ctx context.Context, o Options) error {
 	}
 	f := os.NewFile(uintptr(tunFD), "tun")
 	defer f.Close()
-	logf("tun2sock 引擎启动 fd=%d mtu=%d", tunFD, mtu)
+	logf("tun2sock 引擎启动 fd=%d mtu=%d dns=%v", tunFD, mtu, dnss)
 
 	ep := &tunEndpoint{f: f, mtu: uint32(mtu)}
 	stk := stack.New(stack.Options{
@@ -121,7 +126,7 @@ func Serve(ctx context.Context, o Options) error {
 		if terr != nil {
 			return true
 		}
-		go handleDNS(gonet.NewUDPConn(&wq, ep), o, cn, logf)
+		go handleDNS(gonet.NewUDPConn(&wq, ep), o, cn, dnss, logf)
 		return true
 	})
 	stk.SetTransportProtocolHandler(udp.ProtocolNumber, udpFwd.HandlePacket)
@@ -171,11 +176,11 @@ func relay(a, b net.Conn) {
 	<-done
 }
 
-// handleDNS 单个应用 DNS 查询,分流解析(Clash/mosdns 同款算法):
-//  1. 先经 protect 直连问 223.5.5.5(快,国内 CDN 答案)——答案 IP 命中 CN 段 → 采纳,
-//     后续该 IP 的 TCP 连接会被 CN 段表判为直连,国内站不绕道
-//  2. 未命中 CN(或直连解析失败)→ 经隧道问 8.8.8.8(境外链路干净,防污染)
-func handleDNS(conn *gonet.UDPConn, o Options, cn *CNMatcher, logf func(string, ...any)) {
+// handleDNS 单个应用 DNS 查询,分流解析(Clash/mosdns 同款):
+//  1. CN 探测:按配置列表逐个 protect 直连解析,答案 IP 命中 CN 段 → 采纳
+//     (国内站拿到国内 CDN IP,后续 TCP 命中 CN 段表直连,不绕道)
+//  2. 未命中 CN 或直连失败:按配置列表逐个经隧道问上游(境外出口,防污染)
+func handleDNS(conn *gonet.UDPConn, o Options, cn *CNMatcher, dnss []string, logf func(string, ...any)) {
 	defer conn.Close()
 	buf := make([]byte, 4096) // ponytail: 单次查询；DNS-over-UDP 报文 EDNS0 下一般 ≤4KB
 	n, dstAddr, err := conn.ReadFrom(buf)
@@ -183,9 +188,14 @@ func handleDNS(conn *gonet.UDPConn, o Options, cn *CNMatcher, logf func(string, 
 		return
 	}
 	query := buf[:n]
+	// CN 探测:直连解析,任一答案命中 CN 段即采纳
 	if o.Direct != nil {
-		if rc, err := o.Direct("223.5.5.5", 53); err == nil {
-			resp, err := dnsOverTCP(rc, query)
+		for _, host := range dnss {
+			rc, err := o.Direct(host, 53)
+			if err != nil {
+				continue
+			}
+			resp, err := dnsProbe(rc, query, 4*time.Second)
 			rc.Close()
 			if err == nil && hasCNAnswer(resp, cn) {
 				conn.WriteTo(resp, dstAddr)
@@ -193,65 +203,32 @@ func handleDNS(conn *gonet.UDPConn, o Options, cn *CNMatcher, logf func(string, 
 			}
 		}
 	}
-	rc, err := o.Dial("8.8.8.8", 53) // 经隧道从 VPS 出口解析,防污染
-	if err != nil {
-		logf("DNS 隧道连接 %s 失败: %v", dstAddr, err)
+	// 隧道兜底:全部经隧道从 VPS 出口解析(防污染)
+	var lastErr error
+	for _, host := range dnss {
+		rc, err := o.Dial(host, 53)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resp, err := dnsProbe(rc, query, 5*time.Second)
+		rc.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		conn.WriteTo(resp, dstAddr)
 		return
 	}
-	defer rc.Close()
-	resp, err := dnsOverTCP(rc, query)
-	if err != nil {
-		logf("DNS 查询 %s 失败: %v", dstAddr, err)
-		return
+	if lastErr != nil {
+		logf("DNS 查询失败(全部上游 %v): %v", dnss, lastErr)
 	}
-	conn.WriteTo(resp, dstAddr)
 }
 
-// hasCNAnswer 解析 DNS 应答中的 A 记录,任一 IP 命中 CN 段表即返回 true
-func hasCNAnswer(resp []byte, cn *CNMatcher) bool {
-	if cn == nil || len(resp) < 12 {
-		return false
-	}
-	qd := int(binary.BigEndian.Uint16(resp[4:6]))
-	an := int(binary.BigEndian.Uint16(resp[6:8]))
-	off := 12
-	skipName := func() bool { // 跳过(可能压缩指向的)域名
-		for {
-			if off >= len(resp) {
-				return false
-			}
-			l := int(resp[off])
-			off++
-			if l == 0 {
-				return true
-			}
-			if l&0xC0 != 0 {
-				off++
-				return true
-			}
-			off += l
-		}
-	}
-	for i := 0; i < qd; i++ {
-		if !skipName() {
-			return false
-		}
-		off += 4
-	}
-	for i := 0; i < an && off+10 <= len(resp); i++ {
-		if !skipName() {
-			break
-		}
-		typ := binary.BigEndian.Uint16(resp[off : off+2])
-		rdlen := int(binary.BigEndian.Uint16(resp[off+8 : off+10]))
-		if typ == 1 && rdlen == 4 && off+10+4 <= len(resp) {
-			if cn.IsCN(net.IP(resp[off+10 : off+14])) {
-				return true
-			}
-		}
-		off += 10 + rdlen
-	}
-	return false
+// dnsProbe 带单次超时的 DNS-over-TCP 查询
+func dnsProbe(rc net.Conn, query []byte, timeout time.Duration) ([]byte, error) {
+	rc.SetDeadline(time.Now().Add(timeout))
+	return dnsOverTCP(rc, query)
 }
 
 // dnsOverTCP 一次 DNS-over-TCP 交换：2 字节大端长度前缀包帧。
@@ -262,7 +239,6 @@ func dnsOverTCP(rc net.Conn, query []byte) ([]byte, error) {
 	}
 	var l [2]byte
 	binary.BigEndian.PutUint16(l[:], uint16(len(query)))
-	rc.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := rc.Write(append(l[:], query...)); err != nil {
 		return nil, err
 	}
