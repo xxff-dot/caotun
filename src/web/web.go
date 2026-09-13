@@ -27,6 +27,16 @@ import (
 //go:embed web.html
 var webHTML []byte
 
+// qrcode.js 手机扫码导入用的二维码生成库（MIT, © Kazuhiko Arase, 内嵌零依赖）
+//
+//go:embed qrcode.js
+var qrcodeJS []byte
+
+// favicon.png 网页面板图标
+//
+//go:embed favicon.png
+var faviconPNG []byte
+
 // Port 面板端口：Origin/Host 校验与默认监听共用
 const Port = "21877"
 

@@ -155,6 +155,14 @@ func Run(listen, dir string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(webHTML)
 	})
+	mux.HandleFunc("/qrcode.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Write(qrcodeJS)
+	})
+	mux.HandleFunc("/favicon.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(faviconPNG)
+	})
 	mux.HandleFunc("/api/status", originGuard(port, m.statusHandler))
 	mux.HandleFunc("/api/start", originGuard(port, func(w http.ResponseWriter, r *http.Request) {
 		if err := m.Start(); err != nil {

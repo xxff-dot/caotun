@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+<link rel="icon" type="image/png" href="/favicon.png">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>caotun 管理面板</title>
@@ -145,6 +146,14 @@ pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid
       </details>
     </div>
 
+    <div class="card">
+      <h2>手机扫码导入</h2>
+      <div class="kv"><b>当前模式</b><span id="qrMode">-</span></div>
+      <div class="row"><button id="btnQr" class="pri">显示二维码</button><span id="qrMsg" class="msg"></span></div>
+      <div id="qrBox" style="display:none; text-align:center; margin-top:10px"></div>
+      <p class="muted">手机 App 首次启动点「扫码接入」对准此码，地址与密码自动导入并连接，全程无需手动输入。</p>
+    </div>
+
     <div class="card" style="grid-column:1/-1">
       <h2>配置</h2>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px 18px; margin-bottom:12px">
@@ -208,6 +217,7 @@ pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid
   </div>
 </div>
 
+<script src="/qrcode.js"></script>
 <script>
 async function api(path, opts) {
   const res = await fetch(path, opts);
@@ -373,6 +383,29 @@ $('btnPassRotate').onclick = async () => {
   loadStatus();
 };
 $('btnLog').onclick = loadLog;
+
+// ---- 手机扫码导入 ----
+$('btnQr').onclick = async () => {
+  const box = $('qrBox');
+  if (box.style.display !== 'none') { box.style.display = 'none'; $('btnQr').textContent = '显示二维码'; return; }
+  try {
+    const cfg = await api('/api/config');
+    const addr = cfg.wsMode ? cfg.cdAddr : cfg.directAddr;
+    if (!addr || !cfg.authPassword) { setMsg('qrMsg', '请先在配置卡填写接入地址与认证密码'); return; }
+    const i = addr.lastIndexOf(':');
+    const host = i > 0 ? addr.slice(0, i) : addr;
+    const port = i > 0 ? addr.slice(i + 1) : (cfg.wsMode ? '8443' : '443');
+    const uri = 'caotun://' + host + ':' + port + '?p=' + encodeURIComponent(cfg.authPassword) + '&ws=' + (cfg.wsMode ? 1 : 0);
+    const qr = qrcode(0, 'M');
+    qr.addData(uri);
+    qr.make();
+    box.innerHTML = qr.createImgTag(4, 8);
+    box.style.display = 'block';
+    $('btnQr').textContent = '隐藏二维码';
+    $('qrMode').textContent = cfg.wsMode ? 'CDN · WebSocket' : '直连 · 443';
+    setMsg('qrMsg', '');
+  } catch (e) { setMsg('qrMsg', e.message); }
+};
 
 loadStatus(); loadConfig(); loadLog(); loadCert(); loadSrv();
 setInterval(loadStatus, 2000);
