@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-单二进制加密 TCP 转发隧道（服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分）。**零第三方依赖**，全部标准库；正式证书由服务器上的 `scripts/shell/issue-cert.sh`（acme.sh 定时任务）签发，服务端只认证书文件并自动热加载。注释、日志、README 均为中文。
+单二进制加密 TCP 转发隧道（服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分）。服务端/桌面端除 `golang.org/x/crypto/acme/autocert` 外全部标准库；移动端（仅 `tun2sock/` 包）依赖 `github.com/sagernet/gvisor` 用户态 TCP/IP 栈。正式证书由服务器上的 `scripts/shell/issue-cert.sh`（acme.sh 定时任务）签发，服务端只认证书文件并自动热加载。注释、日志、README 均为中文。
 
 ## 常用命令
 
@@ -44,10 +44,13 @@ go run . web             # 管理面板 127.0.0.1:21877
 
 - `protocol/` — 隧道协议的地址编解码（SOCKS5 风格 `ATYP + addr + port` 大端）
 - `ws/` — 手写最小 WebSocket(RFC6455)，仅二进制帧 ↔ net.Conn 适配（单帧不分段）
-- `tunnel/` — 客户端：本地代理（SOCKS5 与 HTTP CONNECT 同端口，首字节识别）、TLS 双模式拨号、TOFU 指纹
+- `tunnel/` — 客户端：本地代理（SOCKS5 与 HTTP CONNECT 同端口，首字节识别）、TLS 双模式拨号、TOFU 指纹；`Serve(ctx,...)` 是可取消的代理核心，`NewDialer` 生成「目标→隧道」拨号器（桌面 `Run` 与移动端共用）
+- `tun2sock/` — 移动端专用：tun 网卡 fd → gvisor 用户态栈；TCP 全量走隧道、UDP 仅劫持 DNS(53) 转 DNS-over-TCP、其余 UDP 丢弃（`// ponytail` 注释标明扩展点）。gvisor 经 `replace` 指向 `tools/gvisor`（sagernet fork 的 vendor 副本，go 指令压到 1.24 以兼容 ohos-go 工具链；`tools/` 已 gitignore，换机需重放：从模块缓存复制 `gvisor@v0.0.0-20250811-sing-box-mod.1` 并按下述 go.mod 改写）
+- `mobile/` — cgo 入口（`//go:build cgo`，编 `libcaotun.so`）：`CaotunStartTun/CaotunStop/CaotunRunning/CaotunLastError` 四个 C 导出，供鸿蒙 NAPI 桥调用；`sh scripts/shell/build-ohos.sh` 用 OHOS NDK clang 交叉编译
 - `server/` — 服务端：证书两模式（默认 数据目录 `fullchain.pem` 文件热加载 + 自签兜底、手动 `-cert/-key`）、`admin.go` 管理 API（`/_admin/*`：证书查看/密码轮换/流量，`X-Auth` 鉴权）、`handleServerConn` 握手认证、转发、WS 接入；`protection.go` 为 IP 封禁（5 分钟滑窗 10 次失败封 30 分钟）、密码热轮换与流量配额熔断
 - `sysproxy/` — 系统代理平台拆分：Windows 注册表直写 / macOS networksetup / Linux GNOME gsettings；共用本地 PAC 服务（`sysproxy.go`）；非 Windows 为 `//go:build !windows`
-- `web/` — 管理面板：`web.html` 经 `//go:embed` 内嵌进二进制；HTTP API 在 `web_api.go`，服务端操作经 HTTPS 转发到服务端管理 API（无 SSH）；负责拉起/接管 client 子进程（`client.pid`）、管理系统代理
+- `web/` — 管理面板：`web.html` 经 `//go:embed` 内嵌进二进制（`qrcode.js` 为手机扫码导入的内嵌二维码库）；HTTP API 在 `web_api.go`，服务端操作经 HTTPS 转发到服务端管理 API（无 SSH）；负责拉起/接管 client 子进程（`client.pid`）、管理系统代理；「手机扫码导入」卡片生成 `caotun://host:port?p=密码&ws=0|1` 二维码
+- `mobile/ohos/` — 鸿蒙 NEXT 客户端 DevEco 工程（在仓库根 `mobile/` 下，不在 src/）：ArkTS 扫码页（ScanKit）+ `VpnExtensionAbility`（type: "vpn"，建 tun 网卡拿 fd）+ NAPI 桥（`entry/src/main/cpp/`）；构建与已知边界见 `mobile/ohos/README.md`
 
 ### 隧道协议（每条连接一次握手）
 

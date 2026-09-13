@@ -1,5 +1,7 @@
 # caotun
 
+<img src="logo/caotun-mark.png" width="72" alt="caotun logo">
+
 单二进制加密 TCP 转发隧道：服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分。**零第三方依赖**，全部标准库（证书签发交由服务器上的 acme.sh 定时脚本，见「证书签发」一节）。
 
 ## 功能特性
@@ -72,6 +74,8 @@ caotun/
 │   ├── ws/                 最小 WebSocket(RFC6455)：二进制帧 ↔ net.Conn 适配
 │   ├── sysproxy/           系统代理平台拆分：Windows 注册表 / macOS networksetup / Linux gsettings + 共用 PAC 服务
 │   ├── tunnel/             客户端：本地 SOCKS5/HTTP CONNECT 代理、TLS 双模式拨号、TOFU 指纹
+│   ├── tun2sock/           移动端专用：tun 网卡 → gvisor 用户态 TCP/IP 栈 → 隧道（TCP 转发 + DNS 劫持）
+│   ├── mobile/             移动端 cgo 入口：导出 C API 供鸿蒙 NAPI 桥调用（编 libcaotun.so）
 │   ├── server/             服务端：TLS 证书（文件热加载/自签兜底）、握手认证、转发、WS 接入、IP 封禁与流量配额
 │   └── web/                管理面板：HTTP API、子进程管理、服务端管理 API 转发、PAC 白名单、内嵌前端
 ├── scripts/                配置在根目录共享，脚本按平台分目录（内容一一对应）
@@ -79,6 +83,8 @@ caotun/
 │   ├── server.conf         服务端配置（监听 / 证书 / 配额 / 并发 / 轮换）
 │   ├── shell/              Linux + macOS 通用：build.sh 打包 + 全套启停脚本（读根目录 conf）
 │   └── windows/            Windows 等效 .bat：build.bat 打包 + 全套启停（读 ..\ conf）
+├── mobile/
+│   └── ohos/               鸿蒙（HarmonyOS NEXT）客户端 DevEco 工程：扫码导入 + VpnExtension 全局代理，详见 mobile/ohos/README.md
 ├── dist/                   发布包（build 产物，开箱即用）：根放三平台二进制与 conf，
 │                           shell/ 与 windows/ 为对应平台全套启停脚本
 └── .gitattributes          强制全仓库 LF
@@ -168,6 +174,14 @@ sh scripts/shell/stop-client.sh    # 停止（优先在 start 窗口按 Ctrl+C�
 ```
 
 非 Windows 客户端：`./caotun_linux client -server-addr 域名:443 -lport 21878`（密码写 `~/.caotun/auth` 或 `-auth` 指定），应用里手动指 SOCKS5 到该端口即可。
+
+## 手机端（鸿蒙 HarmonyOS NEXT）
+
+与桌面共用同一 Go 核心（隧道引擎 + TOFU 指纹），加一层 gvisor 用户态 TCP/IP 栈把 tun 网卡流量接入隧道。**全自动使用**：PC 面板「手机扫码导入」显示二维码 → 手机 App 扫码 → 地址密码自动导入、VPN 即刻拉起（首次需在系统授权框点一次「允许」），全局代理生效。
+
+- 构建与使用详见 [mobile/ohos/README.md](mobile/ohos/README.md)；
+- Go 引擎交叉编译：`sh scripts/shell/build-ohos.sh`（产出 `libcaotun.so`，需 DevEco 的 OHOS NDK）；
+- 移动端流量特性：TCP 全量走隧道；DNS 劫持转 DNS-over-TCP；QUIC 等其他 UDP 丢弃（促其降级 TCP）。
 
 ## Web 管理面板
 

@@ -9,3 +9,13 @@ tools/
 *.log
 *.old
 *.~
+
+# 鸿蒙工程（DevEco 产物与本地配置）
+mobile/ohos/oh_modules/
+mobile/ohos/entry/build/
+mobile/ohos/build/
+mobile/ohos/.hvigor/
+mobile/ohos/entry/.cxx/
+mobile/ohos/entry/libs/arm64-v8a/*
+!mobile/ohos/entry/libs/arm64-v8a/libcaotun.so
+mobile/ohos/local.properties
