@@ -16,6 +16,12 @@ mobile/ohos/entry/build/
 mobile/ohos/build/
 mobile/ohos/.hvigor/
 mobile/ohos/entry/.cxx/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/app/libs/caotun.aar
+mobile/android/local.properties
+mobile/android/.idea/
 mobile/ohos/entry/libs/arm64-v8a/*
 !mobile/ohos/entry/libs/arm64-v8a/libcaotun.so
 mobile/ohos/local.properties

@@ -1,0 +1,548 @@
+package com.caotun.app
+
+import android.app.Activity
+import android.content.Intent
+import android.net.VpnService
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.delay
+import mobile.Mobile
+
+private val C_BG = Color(0xFFF3F5F9)
+private val C_CARD = Color(0xFFFFFFFF)
+private val C_PRI = Color(0xFF3B82F6)
+private val C_OK = Color(0xFF22C55E)
+private val C_DANGER = Color(0xFFEF4444)
+private val C_TEXT = Color(0xFF1B2230)
+private val C_SUB = Color(0xFF8A93A6)
+
+class MainActivity : ComponentActivity() {
+
+    // ---------- 状态 ----------
+    private val configs = mutableStateOf(ConfigStore.load(this))
+    private val active = mutableIntStateOf(if (configs.value.isEmpty()) -1 else 0)
+    private val running = mutableStateOf(false)
+    private val status = mutableStateOf(if (configs.value.isEmpty()) "扫码添加你的第一台服务器" else "未连接")
+    private val lastErr = mutableStateOf("")
+    private val dnsInput = mutableStateOf(ConfigStore.dns(this))
+
+    // 编辑器:null = 关闭;非 null = 正在编辑的原始配置
+    private var editing by mutableStateOf<ConfigStore.Cfg?>(null)
+    private var editorIsNew by mutableStateOf(false)
+    private var editorOldServer by mutableStateOf("")
+
+    // 删除确认:null = 关闭
+    private var delTarget by mutableStateOf<ConfigStore.Cfg?>(null)
+
+    private var lastStart = 0L
+    private var transitionUntil = 0L
+
+    private val vpnLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+            val granted = r.resultCode == Activity.RESULT_OK
+            vpnPending?.invoke(granted)
+            vpnPending = null
+        }
+
+    private val scanLauncher =
+        registerForActivityResult(ScanContract()) { r ->
+            val uri = r.contents ?: return@registerForActivityResult
+            if (!uri.startsWith("caotun://")) {
+                lastErr.value = "不是有效的 caotun 二维码"
+                return@registerForActivityResult
+            }
+            val rest = uri.removePrefix("caotun://")
+            val qi = rest.indexOf('?')
+            val server = if (qi >= 0) rest.substring(0, qi) else rest
+            var pass = ""
+            var ws = false
+            if (qi >= 0) {
+                for (kv in rest.substring(qi + 1).split('&')) {
+                    val i = kv.indexOf('=')
+                    if (i < 0) continue
+                    when (kv.substring(0, i)) {
+                        "p" -> pass = java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8")
+                        "ws" -> ws = kv.substring(i + 1) == "1"
+                    }
+                }
+            }
+            if (server.isEmpty() || pass.isEmpty()) {
+                lastErr.value = "二维码缺少地址或密码"
+                return@registerForActivityResult
+            }
+            upsertAndStart(ConfigStore.Cfg(server, pass, ws))
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { Dashboard() }
+    }
+
+    // ---------- VPN 启停 ----------
+
+    private fun startVpn(cfg: ConfigStore.Cfg) {
+        lastErr.value = ""
+        status.value = "连接中..."
+        lastStart = System.currentTimeMillis()
+        transitionUntil = System.currentTimeMillis() + 8000
+        // VPN 授权(首次;已授权时 prepare 返回 null 直接走 doStart)
+        val prepare = VpnService.prepare(this)
+        if (prepare != null) {
+            vpnPending = { granted ->
+                if (granted) doStart(cfg) else {
+                    lastErr.value = "VPN 授权被拒绝"
+                    status.value = "未连接"
+                }
+            }
+            vpnLauncher.launch(prepare)
+            return
+        }
+        doStart(cfg)
+    }
+
+    private fun doStart(cfg: ConfigStore.Cfg) {
+        lastStart = System.currentTimeMillis()
+        // 预解析服务器 IP:VPN 一旦激活,系统 DNS 经 tun 会与引擎自解析死锁
+        var dialIp = ""
+        try {
+            val all = java.net.InetAddress.getAllByName(cfg.server.substringBefore(':'))
+            dialIp = all.firstOrNull { it.address.size == 4 }?.hostAddress ?: ""
+        } catch (e: Exception) {
+            lastErr.value = "解析服务器失败"
+            return
+        }
+        when (TunService.start(this, cfg, dialIp, ConfigStore.dns(this))) {
+            0 -> {
+                running.value = true
+                status.value = "已连接"
+            }
+            1 -> status.value = "引擎已在运行"
+            3 -> {
+                lastErr.value = "tun 建立失败"
+                status.value = "启动失败"
+            }
+        }
+    }
+
+    private fun stopVpn() {
+        TunService.stopAll(this)
+        running.value = false
+        status.value = "未连接"
+    }
+
+    private fun toggleVpn() {
+        val cfg = configs.value.getOrNull(active.value)
+        if (cfg == null) {
+            lastErr.value = "请先扫码或添加服务器"
+            return
+        }
+        if (running.value) stopVpn() else startVpn(cfg)
+    }
+
+    private fun upsertAndStart(cfg: ConfigStore.Cfg) {
+        val list = configs.value.toMutableList()
+        val idx = list.indexOfFirst { it.server == cfg.server }
+        if (idx >= 0) list[idx] = cfg else list.add(cfg)
+        configs.value = list
+        active.intValue = list.indexOf(cfg)
+        ConfigStore.saveAll(this, list)
+        ConfigStore.mirrorActive(this, cfg)
+        ConfigStore.setAutostart(this, true)
+        if (running.value) TunService.stopAll(this)
+        startVpn(cfg)
+    }
+
+    // ---------- 编辑器 ----------
+
+    private fun openEditor(cfg: ConfigStore.Cfg?) {
+        editorOldServer = cfg?.server ?: ""
+        editorIsNew = cfg == null
+        editorTarget = cfg ?: ConfigStore.Cfg("", "", false)
+        editorShow.value = true
+    }
+
+    private fun saveEditor() {
+        val old = editorTarget ?: return
+        val server = editorServer.value.trim()
+        val pass = editorPass.value.trim()
+        if (server.isEmpty() || pass.isEmpty()) {
+            editorHint.value = "地址与密码必填"
+            return
+        }
+        val list = configs.value.toMutableList()
+        val idx = list.indexOfFirst { it.server == editorOldServer }
+        if (idx >= 0) list[idx] = ConfigStore.Cfg(server, pass, editorWs.value) else list.add(
+            ConfigStore.Cfg(server, pass, editorWs.value)
+        )
+        configs.value = list
+        active.intValue = list.indexOfFirst { it.server == server }
+        ConfigStore.saveAll(this, list)
+        ConfigStore.mirrorActive(this, list.first { it.server == server })
+        closeEditor()
+        // 改了正在使用的配置 → 重连生效
+        if (running.value) {
+            TunService.stopAll(this)
+            startVpn(list.first { it.server == server })
+        }
+    }
+
+    private fun closeEditor() {
+        editorShow.value = false
+        editorTarget = null
+        editorServer.value = ""
+        editorPass.value = ""
+        editorWs.value = false
+        editorHint.value = ""
+    }
+
+    // ---------- 编辑器状态 ----------
+    private val editorShow = mutableStateOf(false)
+    private val editorServer = mutableStateOf("")
+    private val editorPass = mutableStateOf("")
+    private val editorWs = mutableStateOf(false)
+    private val editorHint = mutableStateOf("")
+
+    // ---------- DNS ----------
+    private fun saveDns() {
+        val v = dnsInput.value.trim()
+        if (v.isNotEmpty()) ConfigStore.saveDns(this, v)
+    }
+
+    // ---------- UI ----------
+
+    @Composable
+    private fun Dashboard() {
+        // 心跳轮询:3 秒同步引擎状态;意外掉线自愈重启
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(3000)
+                val fresh = mobile.Mobile.running()
+                if (fresh != running.value) {
+                    running.value = fresh
+                    if (fresh) {
+                        status.value = "已连接"
+                    } else {
+                        status.value = "未连接"
+                        if (System.currentTimeMillis() - lastStart > 20000 &&
+                            ConfigStore.autostart(this@Dashboard)
+                        ) {
+                            configs.value.getOrNull(active.intValue)?.let { startVpn(it) }
+                        }
+                    }
+                }
+            }
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(C_BG)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+        ) {
+            Spacer(Modifier.height(16.dp))
+            Text("caotun", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = C_TEXT)
+
+            Spacer(Modifier.height(12.dp))
+            if (lastErr.value.isNotEmpty()) {
+                Text(lastErr.value, fontSize = 12.sp, color = C_DANGER)
+                Spacer(Modifier.height(6.dp))
+            }
+
+            // 仪表卡:大圆钮
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = C_CARD,
+                shadowElevation = 4.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(vertical = 24.dp)
+                ) {
+                    val on = running.value
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(120.dp)
+                            .background(if (on) C_OK else Color.Transparent, CircleShape)
+                            .border(5.dp, if (on) C_OK else C_PRI, CircleShape)
+                            .clickable { toggleVpn() }
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("⏻", fontSize = 30.sp, color = if (on) Color.White else C_PRI)
+                            Text(
+                                if (on) "断开" else "连接",
+                                fontSize = 13.sp,
+                                color = if (on) Color.White else C_PRI
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        configs.value.getOrNull(active.intValue)?.server ?: "未选择服务器",
+                        fontSize = 15.sp, fontWeight = FontWeight.Medium, color = C_TEXT,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        if (running.value) "全局代理 · 加密隧道中" else "点击圆钮连接",
+                        fontSize = 12.sp, color = C_SUB
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // 服务器标题
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("服务器", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = C_TEXT)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "＋ 扫码", fontSize = 13.sp, color = C_PRI,
+                    modifier = Modifier.clickable {
+                        val opt = ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            .setPrompt("对准 caotun 二维码")
+                        scanLauncher.launch(opt)
+                    }
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "｜", fontSize = 12.sp, color = C_SUB
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "＋ 手动", fontSize = 13.sp, color = C_PRI,
+                    modifier = Modifier.clickable { openEditor(null) }
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+
+            // 配置卡片列表
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(configs.value.size) { i ->
+                    val c = configs.value[i]
+                    val selected = i == active.intValue
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = C_CARD,
+                        shadowElevation = 2.dp,
+                        border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, C_PRI) else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                active.intValue = i
+                                ConfigStore.mirrorActive(this@Dashboard, c)
+                            }
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(18.dp)
+                                    .background(if (selected) C_PRI else Color.Transparent, CircleShape)
+                                    .border(2.dp, if (selected) C_PRI else Color(0xFFC6CCD8), CircleShape)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    c.server, fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium, color = C_TEXT, maxLines = 1
+                                )
+                                Text(
+                                    if (c.ws) "CDN 线路 · WebSocket" else "直连线路 · 443",
+                                    fontSize = 11.sp, color = C_SUB
+                                )
+                            }
+                            Text(
+                                "✎", fontSize = 15.sp, color = C_PRI,
+                                modifier = Modifier
+                                    .clickable { openEditor(c) }
+                                    .padding(4.dp)
+                            )
+                            Text(
+                                "🗑", fontSize = 15.sp, color = C_DANGER,
+                                modifier = Modifier
+                                    .clickable { delTarget.value = c }
+                                    .padding(4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // DNS 设置
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = C_CARD,
+                shadowElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("DNS", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = C_TEXT)
+                        Spacer(Modifier.width(6.dp))
+                        Text("多个逗号分隔,按序尝试", fontSize = 10.sp, color = C_SUB)
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "保存", fontSize = 12.sp, color = C_PRI,
+                            modifier = Modifier.clickable {
+                                if (dnsInput.value.isNotBlank()) saveDns()
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = dnsInput.value,
+                        onValueChange = { dnsInput.value = it },
+                        placeholder = { Text("223.5.5.5") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "上游解析器:国内直连探测与隧道解析共用;改完断开重连生效",
+                        fontSize = 10.sp, color = C_SUB,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+
+            // 编辑对话框
+            if (editorShow.value) {
+                EditorDialog()
+            }
+
+            // 删除确认
+            delTarget?.let { target ->
+                AlertDialog(
+                    onDismissRequest = { delTarget = null },
+                    title = { Text("删除服务器") },
+                    text = { Text("确定删除 ${target.server} ?") },
+                    confirmButton = {
+                        Text(
+                            "删除", color = C_DANGER,
+                            modifier = Modifier.clickable {
+                                ConfigStore.remove(this@Dashboard, target)
+                                configs.value = ConfigStore.load(this@Dashboard)
+                                if (active.intValue >= configs.value.size) {
+                                    active.intValue = configs.value.size - 1
+                                }
+                                if (running.value) {
+                                    TunService.stopAll(this@Dashboard)
+                                    running.value = false
+                                    status.value = "未连接"
+                                }
+                                delTarget = null
+                            }
+                        )
+                    },
+                    dismissButton = {
+                        Text("取消", modifier = Modifier.clickable { delTarget = null })
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "选中的配置为当前线路 · 切换或修改后自动重连",
+                fontSize = 11.sp, color = C_SUB,
+                modifier = Modifier.padding(bottom = 20.dp)
+            )
+        }
+    }
+
+    // ---------- 编辑对话框 ----------
+
+    @Composable
+    private fun EditorDialog() {
+        AlertDialog(
+            onDismissRequest = { closeEditor() },
+            title = { Text(if (editorIsNew.value) "添加服务器" else "编辑服务器") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = editorServer.value,
+                        onValueChange = { editorServer.value = it },
+                        label = { Text("服务器地址 域名:端口") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editorPass.value,
+                        onValueChange = { editorPass.value = it },
+                        label = { Text("认证密码") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("CDN 线路(WebSocket)", Modifier.weight(1f), fontSize = 13.sp)
+                        Switch(checked = editorWs.value, onCheckedChange = { editorWs.value = it })
+                    }
+                    if (editorHint.value.isNotEmpty()) {
+                        Text(editorHint.value, fontSize = 12.sp, color = C_DANGER)
+                    }
+                }
+            },
+            confirmButton = {
+                Text(
+                    "保存", color = C_PRI, fontSize = 14.sp,
+                    modifier = Modifier.clickable { saveEditor() }
+                )
+            },
+            dismissButton = {
+                Text(
+                    "取消", color = C_SUB, fontSize = 14.sp,
+                    modifier = Modifier.clickable { closeEditor() }
+                )
+            }
+        )
+    }
+}
