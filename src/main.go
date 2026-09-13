@@ -1,4 +1,5 @@
-// caotun —— 单二进制加密 TCP 转发隧道（唯一第三方依赖 golang.org/x/crypto/acme/autocert）
+// caotun —— 单二进制加密 TCP 转发隧道（服务端/桌面仅依赖 golang.org/x/crypto/acme/autocert，
+// 移动端 tun2sock 另依赖 github.com/sagernet/gvisor 用户态 TCP/IP 栈）
 //
 // 用法:
 //

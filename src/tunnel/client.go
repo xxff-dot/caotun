@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"bufio"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
@@ -27,27 +28,11 @@ import (
 
 // ==================== 客户端 ====================
 
-// Run 客户端主入口：本地代理监听 + 系统代理接管 + 信号处理
+// Run 客户端主入口：本地代理监听 + 系统代理接管 + 信号处理（桌面专用壳，核心在 Serve）
 func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pacDomains, pacIPs []string, useWS bool) {
 	if serverAddr == "" {
 		log.Fatal("client 模式必须指定 -server 服务器地址")
 	}
-	fingerPath := filepath.Join(dir, "fingerprint.txt")
-	expected := ""
-	if !insecure {
-		if b, err := os.ReadFile(fingerPath); err == nil {
-			expected = strings.TrimSpace(string(b))
-		}
-	}
-	dial := func(host string, port int) (net.Conn, error) {
-		return dialTunnel(serverAddr, []byte(auth), expected, fingerPath, insecure, host, port, useWS)
-	}
-
-	ln, err := net.Listen("tcp", listen)
-	if err != nil {
-		log.Fatalf("本地监听失败: %v", err)
-	}
-	log.Printf("本地代理已启动 %s（SOCKS5 + HTTP CONNECT）", listen)
 
 	// 系统代理：pac = 分流(GitHub 走隧道)；all = 全量
 	var undo func() = func() {}
@@ -61,18 +46,96 @@ func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pa
 		undo = sysproxy.ApplyAll(proxyAddr, bypassHosts)
 		log.Printf("系统代理已设为全局模式（服务器 IP 与局域网除外）")
 	}
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	defer undo() // 信号或错误退出前恢复系统代理
+	if err := Serve(ctx, serverAddr, listen, auth, dir, insecure, useWS); err != nil && ctx.Err() == nil {
+		log.Fatalf("客户端退出: %v", err)
+	}
+}
+
+// NewDialer 生成「目标 host:port → 隧道连接」的拨号器（桌面本地代理与移动端 tun2sock 共用）。
+// protectPath 非空时（移动端），每个出站 socket 先经该 unix socket 发给宿主
+// 调 VpnConnection.protect() 打免捕获标记，避免隧道自身流量回环进 tun
+func NewDialer(serverAddr, auth, dir string, insecure, useWS bool, protectPath, dialIP string) func(host string, port int) (net.Conn, error) {
+	fingerPath := filepath.Join(dir, "fingerprint.txt")
+	expected := ""
+	if !insecure {
+		if b, err := os.ReadFile(fingerPath); err == nil {
+			expected = strings.TrimSpace(string(b))
+		}
+	}
+	var d net.Dialer
+	d.Timeout = 10 * time.Second
+	if protectPath != "" {
+		p := newProtector(protectPath)
+		d.Control = func(network, address string, c syscall.RawConn) error {
+			var perr error
+			c.Control(func(fd uintptr) {
+				if !p.protect(int(fd)) {
+					perr = errors.New("protect fd 失败")
+				}
+			})
+			return perr
+		}
+	}
+	dialHost := serverAddr
+	if dialIP != "" {
+		if _, port, err := net.SplitHostPort(serverAddr); err == nil {
+			dialHost = net.JoinHostPort(dialIP, port) // IP 直拨,端口沿用
+		}
+	}
+	return func(host string, port int) (net.Conn, error) {
+		return dialTunnelD(&d, dialHost, serverAddr, []byte(auth), expected, fingerPath, insecure, host, port, useWS)
+	}
+}
+
+// NewDirectDialer 生成「protect 后直连物理网络」的拨号器(移动端 CN 分流直连用)
+func NewDirectDialer(protectPath string) func(host string, port int) (net.Conn, error) {
+	var d net.Dialer
+	d.Timeout = 10 * time.Second
+	if protectPath != "" {
+		p := newProtector(protectPath)
+		d.Control = func(network, address string, c syscall.RawConn) error {
+			var perr error
+			c.Control(func(fd uintptr) {
+				if !p.protect(int(fd)) {
+					perr = errors.New("protect fd 失败")
+				}
+			})
+			return perr
+		}
+	}
+	return func(host string, port int) (net.Conn, error) {
+		return d.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	}
+}
+
+// Serve 本地代理核心：监听 listen，SOCKS5 + HTTP CONNECT 同端口，每连接一条隧道。
+// ctx 取消即关闭监听并返回（移动端 VpnExtension 与桌面 Run 共用）
+func Serve(ctx context.Context, serverAddr, listen, auth, dir string, insecure bool, useWS bool) error {
+	if serverAddr == "" {
+		return errors.New("client 模式必须指定 -server 服务器地址")
+	}
+	dial := NewDialer(serverAddr, auth, dir, insecure, useWS, "", "")
+
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return fmt.Errorf("本地监听失败: %w", err)
+	}
+	log.Printf("本地代理已启动 %s（SOCKS5 + HTTP CONNECT）", listen)
 	go func() {
-		<-sigCh
-		log.Printf("正在恢复系统代理设置并退出...")
-		undo()
-		os.Exit(0)
+		<-ctx.Done()
+		ln.Close()
 	}()
 
 	for {
 		c, err := ln.Accept()
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			time.Sleep(10 * time.Millisecond) // 监听异常(如 fd 耗尽)时防热循环
 			continue
 		}
@@ -220,18 +283,29 @@ func relay(a, b net.Conn) {
 // 建立到服务端的隧道并指定目标。
 // TLS 校验混合模式：先按标准 CA 校验（服务端配真证书时直通）；
 // 失败则回退自签+TOFU 指纹模式。两种模式安全性都成立。
+// dialHost 为实际拨号地址（移动端传预解析 IP），sniHost 用于 TLS SNI/证书校验（域名）。
 func dialTunnel(serverAddr string, auth []byte, expectedFingerprint, fingerPath string, insecure bool, host string, port int, useWS bool) (net.Conn, error) {
+	return dialTunnelD(nil, serverAddr, serverAddr, auth, expectedFingerprint, fingerPath, insecure, host, port, useWS)
+}
+
+func dialTunnelD(d *net.Dialer, dialHost, sniHost string, auth []byte, expectedFingerprint, fingerPath string, insecure bool, host string, port int, useWS bool) (net.Conn, error) {
+	dial := func(addr string) (net.Conn, error) {
+		if d != nil {
+			return d.Dial("tcp", addr)
+		}
+		return net.DialTimeout("tcp", addr, 10*time.Second)
+	}
 	// 1) 标准 CA 校验尝试（真证书直通）
 	if !insecure {
-		raw, err := net.DialTimeout("tcp", serverAddr, 10*time.Second)
+		raw, err := dial(dialHost)
 		if err == nil {
 			raw.SetDeadline(time.Now().Add(15 * time.Second))
-			tc := tls.Client(raw, &tls.Config{ServerName: protocol.ServerHost(serverAddr)})
+			tc := tls.Client(raw, &tls.Config{ServerName: protocol.ServerHost(sniHost)})
 			if err := tc.Handshake(); err == nil {
 				raw.SetDeadline(time.Time{})
 				var c net.Conn = tc
 				if useWS {
-					if c, err = ws.ClientConn(tc, protocol.ServerHost(serverAddr)); err != nil {
+					if c, err = ws.ClientConn(tc, protocol.ServerHost(sniHost)); err != nil {
 						raw.Close()
 						return nil, err
 					}
@@ -242,14 +316,14 @@ func dialTunnel(serverAddr string, auth []byte, expectedFingerprint, fingerPath 
 		}
 	}
 	// 2) 回退: 自签证书 + TOFU 指纹
-	raw, err := net.DialTimeout("tcp", serverAddr, 10*time.Second)
+	raw, err := dial(dialHost)
 	if err != nil {
 		return nil, err
 	}
 	raw.SetDeadline(time.Now().Add(15 * time.Second))
 	// InsecureSkipVerify 是因为服务端可能用自签证书，安全由 TOFU 指纹校验保证；
 	// ServerName 必须带：服务端 autocert 需要 SNI 才能选出证书
-	tc := tls.Client(raw, &tls.Config{ServerName: protocol.ServerHost(serverAddr), InsecureSkipVerify: true})
+	tc := tls.Client(raw, &tls.Config{ServerName: protocol.ServerHost(sniHost), InsecureSkipVerify: true})
 	if err := tc.Handshake(); err != nil {
 		raw.Close()
 		return nil, err
@@ -275,7 +349,7 @@ func dialTunnel(serverAddr string, auth []byte, expectedFingerprint, fingerPath 
 
 	var c net.Conn = tc
 	if useWS {
-		if c, err = ws.ClientConn(tc, protocol.ServerHost(serverAddr)); err != nil {
+		if c, err = ws.ClientConn(tc, protocol.ServerHost(sniHost)); err != nil {
 			raw.Close()
 			return nil, err
 		}
