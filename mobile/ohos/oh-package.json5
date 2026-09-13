@@ -1,0 +1,11 @@
+{
+  "modelVersion": "6.0.2",
+  "name": "caotun",
+  "version": "1.0.0",
+  "description": "caotun 加密隧道鸿蒙客户端",
+  "main": "",
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+  }
+}

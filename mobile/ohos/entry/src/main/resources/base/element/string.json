@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "caotun 加密隧道" },
+    { "name": "EntryAbility_desc", "value": "caotun 加密隧道" },
+    { "name": "EntryAbility_label", "value": "caotun" }
+  ]
+}
