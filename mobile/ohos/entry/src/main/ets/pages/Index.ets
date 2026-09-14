@@ -363,6 +363,7 @@ struct Index {
       const server = qi >= 0 ? rest.slice(0, qi) : rest;
       let pass = '';
       let ws = false;
+      let dns = '';
       if (qi >= 0) {
         for (const kv of rest.slice(qi + 1).split('&')) {
           const i = kv.indexOf('=');
@@ -375,6 +376,8 @@ struct Index {
             pass = decodeURIComponent(v);
           } else if (k === 'ws') {
             ws = v === '1';
+          } else if (k === 'dns') {
+            dns = decodeURIComponent(v);
           }
         }
       }
@@ -403,6 +406,9 @@ struct Index {
       await this.persistAll(store, this.configs);
       this.active = idx;
       await this.mirrorActive(store, idx);
+      if (dns.trim() !== '') {
+        await store.put('dns', dns.trim()); // 扫码导入的 DNS 上游写入既有偏好，断开重连后生效
+      }
       await store.put('autostart', true);
       await store.flush();
       this.lastErr = '';

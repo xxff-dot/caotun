@@ -7,8 +7,6 @@ package tun2sock
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"caotun/protocol"
 
 	"github.com/sagernet/gvisor/pkg/buffer"
 	"github.com/sagernet/gvisor/pkg/tcpip"
@@ -228,28 +228,7 @@ func handleDNS(conn *gonet.UDPConn, o Options, cn *CNMatcher, dnss []string, log
 // dnsProbe 带单次超时的 DNS-over-TCP 查询
 func dnsProbe(rc net.Conn, query []byte, timeout time.Duration) ([]byte, error) {
 	rc.SetDeadline(time.Now().Add(timeout))
-	return dnsOverTCP(rc, query)
-}
-
-// dnsOverTCP 一次 DNS-over-TCP 交换：2 字节大端长度前缀包帧。
-// ponytail: 只读第一响应即返回；多报文响应（极少见）截断，需要时改为循环读
-func dnsOverTCP(rc net.Conn, query []byte) ([]byte, error) {
-	if len(query) > 0xFFFF {
-		return nil, errors.New("DNS 查询超长")
-	}
-	var l [2]byte
-	binary.BigEndian.PutUint16(l[:], uint16(len(query)))
-	if _, err := rc.Write(append(l[:], query...)); err != nil {
-		return nil, err
-	}
-	if _, err := io.ReadFull(rc, l[:]); err != nil {
-		return nil, err
-	}
-	resp := make([]byte, binary.BigEndian.Uint16(l[:]))
-	if _, err := io.ReadFull(rc, resp); err != nil {
-		return nil, err
-	}
-	return resp, nil
+	return protocol.DNSOverTCP(rc, query)
 }
 
 // ==================== tun LinkEndpoint ====================

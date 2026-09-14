@@ -19,7 +19,6 @@ object ConfigStore {
                 list.add(Cfg(s, sp.getString("c$i.pass", "") ?: "", sp.getBoolean("c$i.ws", false)))
             }
         }
-        // 旧版单配置迁移
         if (list.isEmpty()) {
             sp.getString("server", "")?.takeIf { it.isNotEmpty() }?.let {
                 list.add(Cfg(it, sp.getString("pass", "") ?: "", sp.getBoolean("ws", false)))
@@ -40,13 +39,20 @@ object ConfigStore {
         e.apply()
     }
 
-    /** 把 cfg 镜像到顶层键(VPN 进程的 Go 引擎据此连接,同鸿蒙端约定) */
+    fun activeCfg(ctx: Context): Cfg? {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        val server = sp.getString("server", "") ?: ""
+        val pass = sp.getString("pass", "") ?: ""
+        if (server.isEmpty() || pass.isEmpty()) return null
+        return Cfg(server, pass, sp.getBoolean("ws", false))
+    }
+
     fun mirrorActive(ctx: Context, cfg: Cfg) {
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).edit()
             .putString("server", cfg.server)
             .putString("pass", cfg.pass)
             .putBoolean("ws", cfg.ws)
-            .putString("dialip", "") // 切换后需重新预解析
+            .putString("dialip", "")
             .apply()
     }
 
@@ -55,9 +61,6 @@ object ConfigStore {
         list.removeAll { it.server == cfg.server && it.pass == cfg.pass }
         saveAll(ctx, list)
     }
-
-    fun dialIp(ctx: Context): String =
-        ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).getString("dialip", "") ?: ""
 
     fun dns(ctx: Context): String =
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).getString("dns", "223.5.5.5") ?: "223.5.5.5"

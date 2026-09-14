@@ -30,6 +30,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -60,24 +61,25 @@ private val C_SUB = Color(0xFF8A93A6)
 
 class MainActivity : ComponentActivity() {
 
-    // ---------- 状态 ----------
-    private val configs = mutableStateOf(ConfigStore.load(this))
-    private val active = mutableIntStateOf(if (configs.value.isEmpty()) -1 else 0)
+    // ---------- 状态(构造期置空,onCreate 里加载;Context 未 attach 前不能读偏好) ----------
+    private val configs = mutableStateOf<List<Cfg>>(emptyList())
+    private val active = mutableIntStateOf(-1)
     private val running = mutableStateOf(false)
-    private val status = mutableStateOf(if (configs.value.isEmpty()) "扫码添加你的第一台服务器" else "未连接")
+    private val status = mutableStateOf("Starting")
     private val lastErr = mutableStateOf("")
-    private val dnsInput = mutableStateOf(ConfigStore.dns(this))
+    private val dnsInput = mutableStateOf("223.5.5.5")
 
     // 编辑器:null = 关闭;非 null = 正在编辑的原始配置
-    private var editing by mutableStateOf<ConfigStore.Cfg?>(null)
+    private var editing by mutableStateOf<Cfg?>(null)
     private var editorIsNew by mutableStateOf(false)
     private var editorOldServer by mutableStateOf("")
 
     // 删除确认:null = 关闭
-    private var delTarget by mutableStateOf<ConfigStore.Cfg?>(null)
+    private var delTarget by mutableStateOf<Cfg?>(null)
 
     private var lastStart = 0L
     private var transitionUntil = 0L
+    private var vpnPending: ((Boolean) -> Unit)? = null
 
     private val vpnLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
@@ -98,6 +100,7 @@ class MainActivity : ComponentActivity() {
             val server = if (qi >= 0) rest.substring(0, qi) else rest
             var pass = ""
             var ws = false
+            var dns = ""
             if (qi >= 0) {
                 for (kv in rest.substring(qi + 1).split('&')) {
                     val i = kv.indexOf('=')
@@ -105,6 +108,7 @@ class MainActivity : ComponentActivity() {
                     when (kv.substring(0, i)) {
                         "p" -> pass = java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8")
                         "ws" -> ws = kv.substring(i + 1) == "1"
+                        "dns" -> dns = java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8")
                     }
                 }
             }
@@ -112,17 +116,21 @@ class MainActivity : ComponentActivity() {
                 lastErr.value = "二维码缺少地址或密码"
                 return@registerForActivityResult
             }
-            upsertAndStart(ConfigStore.Cfg(server, pass, ws))
+            if (dns.isNotBlank()) ConfigStore.saveDns(this@MainActivity, dns.trim()) // 写入既有偏好，下次启动生效
+            upsertAndStart(Cfg(server, pass, ws))
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configs.value = ConfigStore.load(this)
+        active.intValue = if (configs.value.isEmpty()) -1 else 0
+        dnsInput.value = ConfigStore.dns(this)
         setContent { Dashboard() }
     }
 
     // ---------- VPN 启停 ----------
 
-    private fun startVpn(cfg: ConfigStore.Cfg) {
+    private fun startVpn(cfg: Cfg) {
         lastErr.value = ""
         status.value = "连接中..."
         lastStart = System.currentTimeMillis()
@@ -142,28 +150,20 @@ class MainActivity : ComponentActivity() {
         doStart(cfg)
     }
 
-    private fun doStart(cfg: ConfigStore.Cfg) {
+    private fun doStart(cfg: Cfg) {
         lastStart = System.currentTimeMillis()
-        // 预解析服务器 IP:VPN 一旦激活,系统 DNS 经 tun 会与引擎自解析死锁
+        // 预解析服务器 IP:VPN 一旦激活,系统 DNS 经 tun 会与引擎自解析死锁。
+        // 解析失败不阻断(VPN 未启动时 Go 引擎自身可正常解析域名)
         var dialIp = ""
         try {
             val all = java.net.InetAddress.getAllByName(cfg.server.substringBefore(':'))
             dialIp = all.firstOrNull { it.address.size == 4 }?.hostAddress ?: ""
         } catch (e: Exception) {
-            lastErr.value = "解析服务器失败"
-            return
+            android.util.Log.w("CaotunUI", "pre-resolve failed, will use hostname")
         }
-        when (TunService.start(this, cfg, dialIp, ConfigStore.dns(this))) {
-            0 -> {
-                running.value = true
-                status.value = "已连接"
-            }
-            1 -> status.value = "引擎已在运行"
-            3 -> {
-                lastErr.value = "tun 建立失败"
-                status.value = "启动失败"
-            }
-        }
+        startService(Intent(this, TunService::class.java))
+        running.value = true
+        status.value = "已连接"
     }
 
     private fun stopVpn() {
@@ -181,7 +181,7 @@ class MainActivity : ComponentActivity() {
         if (running.value) stopVpn() else startVpn(cfg)
     }
 
-    private fun upsertAndStart(cfg: ConfigStore.Cfg) {
+    private fun upsertAndStart(cfg: Cfg) {
         val list = configs.value.toMutableList()
         val idx = list.indexOfFirst { it.server == cfg.server }
         if (idx >= 0) list[idx] = cfg else list.add(cfg)
@@ -196,15 +196,15 @@ class MainActivity : ComponentActivity() {
 
     // ---------- 编辑器 ----------
 
-    private fun openEditor(cfg: ConfigStore.Cfg?) {
+    private fun openEditor(cfg: Cfg?) {
         editorOldServer = cfg?.server ?: ""
         editorIsNew = cfg == null
-        editorTarget = cfg ?: ConfigStore.Cfg("", "", false)
+        editing = cfg ?: Cfg("", "", false)
         editorShow.value = true
     }
 
     private fun saveEditor() {
-        val old = editorTarget ?: return
+        val old = editing ?: return
         val server = editorServer.value.trim()
         val pass = editorPass.value.trim()
         if (server.isEmpty() || pass.isEmpty()) {
@@ -213,8 +213,8 @@ class MainActivity : ComponentActivity() {
         }
         val list = configs.value.toMutableList()
         val idx = list.indexOfFirst { it.server == editorOldServer }
-        if (idx >= 0) list[idx] = ConfigStore.Cfg(server, pass, editorWs.value) else list.add(
-            ConfigStore.Cfg(server, pass, editorWs.value)
+        if (idx >= 0) list[idx] = Cfg(server, pass, editorWs.value) else list.add(
+            Cfg(server, pass, editorWs.value)
         )
         configs.value = list
         active.intValue = list.indexOfFirst { it.server == server }
@@ -230,7 +230,7 @@ class MainActivity : ComponentActivity() {
 
     private fun closeEditor() {
         editorShow.value = false
-        editorTarget = null
+        editing = null
         editorServer.value = ""
         editorPass.value = ""
         editorWs.value = false
@@ -266,7 +266,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         status.value = "未连接"
                         if (System.currentTimeMillis() - lastStart > 20000 &&
-                            ConfigStore.autostart(this@Dashboard)
+                            ConfigStore.autostart(this@MainActivity)
                         ) {
                             configs.value.getOrNull(active.intValue)?.let { startVpn(it) }
                         }
@@ -362,9 +362,9 @@ class MainActivity : ComponentActivity() {
             }
             Spacer(Modifier.height(8.dp))
 
-            // 配置卡片列表
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(configs.value.size) { i ->
+            // 配置卡片列表(外层已 verticalScroll,这里用普通 Column 避免嵌套滚动)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (i in configs.value.indices) {
                     val c = configs.value[i]
                     val selected = i == active.intValue
                     Surface(
@@ -376,7 +376,7 @@ class MainActivity : ComponentActivity() {
                             .fillMaxWidth()
                             .clickable {
                                 active.intValue = i
-                                ConfigStore.mirrorActive(this@Dashboard, c)
+                                ConfigStore.mirrorActive(this@MainActivity, c)
                             }
                     ) {
                         Row(
@@ -409,7 +409,7 @@ class MainActivity : ComponentActivity() {
                             Text(
                                 "🗑", fontSize = 15.sp, color = C_DANGER,
                                 modifier = Modifier
-                                    .clickable { delTarget.value = c }
+                                    .clickable { delTarget = c }
                                     .padding(4.dp)
                             )
                         }
@@ -470,13 +470,13 @@ class MainActivity : ComponentActivity() {
                         Text(
                             "删除", color = C_DANGER,
                             modifier = Modifier.clickable {
-                                ConfigStore.remove(this@Dashboard, target)
-                                configs.value = ConfigStore.load(this@Dashboard)
+                                ConfigStore.remove(this@MainActivity, target)
+                                configs.value = ConfigStore.load(this@MainActivity)
                                 if (active.intValue >= configs.value.size) {
                                     active.intValue = configs.value.size - 1
                                 }
                                 if (running.value) {
-                                    TunService.stopAll(this@Dashboard)
+                                    TunService.stopAll(this@MainActivity)
                                     running.value = false
                                     status.value = "未连接"
                                 }
@@ -505,7 +505,7 @@ class MainActivity : ComponentActivity() {
     private fun EditorDialog() {
         AlertDialog(
             onDismissRequest = { closeEditor() },
-            title = { Text(if (editorIsNew.value) "添加服务器" else "编辑服务器") },
+            title = { Text(if (editorIsNew) "添加服务器" else "编辑服务器") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(

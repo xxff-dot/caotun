@@ -161,6 +161,7 @@ pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid
       <div class="kv" id="kvCdAddr" style="display:none"><b>CDN地址<span class="tip">?<span class="ttip">橙云域名:8443。域名需托管到 Cloudflare 并开启橙色云代理，流量封装成 WebSocket 混入 CF 正常流量，VPS 真实 IP 被隐藏、抗封锁，代价是多一跳延迟。</span></span></b><input id="cfgCdAddr" style="width:100%" placeholder="橙云域名:8443（当前模式使用）"></div>
         <div class="kv"><b>证书主域<span class="tip">?<span class="ttip">仅用于 PAC 绕行：访问这个域名（及其子域）时不走隧道、直接连接。服务端实际签发证书的域名以服务器启动参数/issue-cert.sh 为准，这里改不会改变服务端证书。</span></span></b><input id="cfgDomain" style="width:100%" placeholder="如 example.com（通配主域+全部子域）"></div>
         <div class="kv"><b>本地端口<span class="tip">?<span class="ttip">本机 SOCKS5/HTTP 代理监听端口（绑定 127.0.0.1），浏览器/应用把代理指向 127.0.0.1:此端口。面板会自动接管系统代理，一般不用改。</span></span></b><input id="cfgLocalPort" style="width:100%"></div>
+        <div class="kv"><b>DNS 上游<span class="tip">?<span class="ttip">本地 DNS 转发上游（逗号分隔 IP，按序尝试），设置后客户端在本机 127.0.0.1:53 提供 DNS：把系统/网卡 DNS 指向它，所有域名经隧道由 VPS 出口解析，本地解析 DNS 的应用（Android Studio/SDK Manager 等）不再拿到国内 CDN IP。提示：223.5.5.5 对 Google 系域名返回国内 CDN 节点（VPS 连不上），下载 dl.google.com 失败时改为 8.8.8.8。清空 = 关闭。</span></span></b><input id="cfgDNS" style="width:100%" placeholder="逗号分隔 IP，如 223.5.5.5,8.8.8.8；清空 = 关闭"></div>
         <div class="kv"><b>流量配额<span class="tip">?<span class="ttip">仅用于面板显示"服务器流量"进度条。服务端真正的限额以其启动参数 -max-gb（server.conf 的 MAX_GB）为准，超限后服务端拒绝新隧道。</span></span></b><input id="cfgMaxGB" style="width:100%"></div>
         <div class="kv"><b>周期天数<span class="tip">?<span class="ttip">流量统计周期天数，到期服务端自动清零重新计数。同样以服务端启动参数为准，这里仅用于显示剩余天数。</span></span></b><input id="cfgQuotaDays" style="width:100%"></div>
         <div class="kv"><b>认证密码<span class="tip">?<span class="ttip">两端必须一致的认证密码，也是面板调服务端管理 API 的凭证。「轮换」让服务端生成随机新密码并热生效，本面板自动重启客户端。密码错误时隧道会连不上（客户端表现为 EOF）。</span></span></b><span style="display:flex;gap:6px"><input id="cfgAuthPassword" type="password" style="flex:1;min-width:0" placeholder="必填，需与服务端一致"><button id="btnPassEye">显示</button><button id="btnPassRotate" title="服务端生成随机新密码并热生效，面板自动重启客户端">轮换</button></span></div>
@@ -265,6 +266,7 @@ async function loadConfig() {
     $('cfgDirectAddr').value = c.directAddr;
     $('cfgCdAddr').value = c.cdAddr;
     $('cfgLocalPort').value = c.localPort;
+    $('cfgDNS').value = (c.dns || []).join(',');
     $('cfgMaxGB').value = c.maxGB;
     $('cfgQuotaDays').value = c.quotaDays;
     $('cfgDomain').value = c.domain || '';
@@ -305,6 +307,7 @@ async function saveConfig() {
       wsMode: (document.querySelector('input[name=access]:checked') || {}).value === 'ws',
       proxyDomains: $('cfgDomains').value.split('\n').map(s => s.trim()).filter(Boolean),
       proxyIps: $('cfgIps').value.split('\n').map(s => s.trim()).filter(Boolean),
+      dns: $('cfgDNS').value.split(',').map(s => s.trim()).filter(Boolean),
       mode: (document.querySelector('input[name=mode]:checked') || {}).value || 'pac'
     })});
     setMsg('cfgMsg', '已保存');
@@ -395,7 +398,8 @@ $('btnQr').onclick = async () => {
     const i = addr.lastIndexOf(':');
     const host = i > 0 ? addr.slice(0, i) : addr;
     const port = i > 0 ? addr.slice(i + 1) : (cfg.wsMode ? '8443' : '443');
-    const uri = 'caotun://' + host + ':' + port + '?p=' + encodeURIComponent(cfg.authPassword) + '&ws=' + (cfg.wsMode ? 1 : 0);
+    const dns = (cfg.dns || []).filter(Boolean).join(',');
+    const uri = 'caotun://' + host + ':' + port + '?p=' + encodeURIComponent(cfg.authPassword) + '&ws=' + (cfg.wsMode ? 1 : 0) + (dns ? '&dns=' + encodeURIComponent(dns) : '');
     const qr = qrcode(0, 'M');
     qr.addData(uri);
     qr.make();

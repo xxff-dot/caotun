@@ -5,10 +5,11 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 )
 
-// TestDNSOverTCP 验证 DNS-over-TCP 长度前缀帧的收发往返
-func TestDNSOverTCP(t *testing.T) {
+// TestDNSProbe 验证 dnsProbe 包装：超时设置 + 委托 protocol.DNSOverTCP 的帧收发往返
+func TestDNSProbe(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 	go func() {
@@ -21,14 +22,14 @@ func TestDNSOverTCP(t *testing.T) {
 		if _, err := io.ReadFull(server, query); err != nil {
 			return
 		}
-		// 原样回等长应答（只验证帧格式，不解析 DNS 语义）
+		// 原样回等长应答（只验证超时与帧往返；帧实现本身已上移 protocol 包）
 		binary.BigEndian.PutUint16(l[:], uint16(len(query)))
 		server.Write(append(l[:], query...))
 	}()
 
-	resp, err := dnsOverTCP(client, []byte("query-bytes"))
+	resp, err := dnsProbe(client, []byte("query-bytes"), 2*time.Second)
 	if err != nil {
-		t.Fatalf("dnsOverTCP: %v", err)
+		t.Fatalf("dnsProbe: %v", err)
 	}
 	if string(resp) != "query-bytes" {
 		t.Fatalf("应答不匹配: %q", resp)

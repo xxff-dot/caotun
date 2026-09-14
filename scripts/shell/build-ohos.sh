@@ -49,6 +49,6 @@ OHOS_GO="${OHOS_GO:-$ROOT/tools/ohos-go124}"
 cd "$ROOT/src"
 GOROOT="$OHOS_GO" GOTOOLCHAIN=local \
 GOOS=openharmony GOARCH=arm64 CGO_ENABLED=1 CC="$CC" CGO_CFLAGS="-D__MUSL__" CGO_LDFLAGS="$HILOG_SO" \
-  "$OHOS_GO/bin/go$GOEXE" build -trimpath -ldflags="-s -w -extldflags=-Wl,-soname,libcaotun.so" -buildmode=c-shared -o "$OUT_DIR/libcaotun.so" ./mobile
+  "$OHOS_GO/bin/go$GOEXE" build -trimpath -ldflags="-s -w -extldflags=-Wl,-soname,libcaotun.so" -buildmode=c-shared -o "$OUT_DIR/libcaotun.so" ./mobile/ohos
 echo "产物: $OUT_DIR/libcaotun.so"
 ls -lh "$OUT_DIR/libcaotun.so"

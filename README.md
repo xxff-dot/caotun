@@ -259,6 +259,7 @@ sh ~/caotun/issue-cert.sh direct.example.com --http
 | `-sysproxy` | off / pac(白名单分流) / all(全局)，退出自动恢复 |
 | `-pac-port` | PAC 脚本下载端口（默认 21879；仅 pac 模式用，代理流量不走此端口） |
 | `-ips` | pac 模式下额外走隧道的 IP（逗号分隔，支持 `*` 通配，如 `1.2.3.4` 或 `52.10.*`） |
+| `-dns` | 本地 DNS 转发上游（逗号分隔 IP，按序尝试；设置后 `127.0.0.1:53` 可作系统/网卡 DNS，查询经隧道由服务端出口解析，服务器域名自动走直连解析防回环。注意 223.5.5.5 对 Google 系域名返回国内 CDN 节点，下载 `dl.google.com` 失败时改 `8.8.8.8`） |
 | `-ws` | 走 WebSocket/CDN 传输（对接服务端 `-ws-port`） |
 | `-insecure` | 跳过证书校验（不建议，仅调试） |
 
@@ -316,6 +317,7 @@ sh ~/caotun/issue-cert.sh direct.example.com --http
 | 8443 | server | WebSocket 接入（CDN 可代理的 HTTPS 备用端口，`WS_PORT` / `-ws-port` 可改） |
 | 21878 | client | 本地代理（SOCKS5 + HTTP CONNECT 同端口；`LOCAL_PORT` / `-lport` 可改） |
 | 21879 | client | 本地 PAC 脚本服务（pac 模式自动起，`PAC_PORT` / `-pac-port` 可改） |
+| 53/udp+tcp | client | 本地 DNS 转发（设置 `-dns` / 面板「DNS 上游」后启用，系统 DNS 指向 `127.0.0.1` 即用） |
 | 21877 | web | 管理面板（默认，仅绑 127.0.0.1，`-web-port` 可改） |
 
 ## 平台兼容

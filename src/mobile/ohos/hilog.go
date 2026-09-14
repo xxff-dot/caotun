@@ -1,10 +1,9 @@
+// hilog 桥:Go 引擎日志进鸿蒙系统日志域,hdc shell hilog 可采集
 //go:build openharmony
 
 package main
 
 /*
-// hilog 库经 build-ohos.sh 的 CGO_LDFLAGS 以文件路径传入(NDK clang 的 -l 搜索在
-// Windows 宿主 + OHOS sysroot 组合下不可用)
 #include <stdlib.h>
 #include <hilog/log.h>
 
@@ -14,9 +13,15 @@ static void hiLog(const char* msg) {
 */
 import "C"
 
-import "unsafe"
+import (
+	"caotun/mobile/core"
+	"unsafe"
+)
 
-// hiLogf 引擎日志进 hilog(LOG_APP 域),hdc shell hilog 可见
+func init() {
+	core.SetLogHook(hiLogf)
+}
+
 func hiLogf(msg string) {
 	cmsg := C.CString(msg)
 	C.hiLog(cmsg)

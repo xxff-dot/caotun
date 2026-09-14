@@ -28,8 +28,8 @@ import (
 
 // ==================== 客户端 ====================
 
-// Run 客户端主入口：本地代理监听 + 系统代理接管 + 信号处理（桌面专用壳，核心在 Serve）
-func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pacDomains, pacIPs []string, useWS bool) {
+// Run 客户端主入口：本地代理监听 + 系统代理接管 + DNS 转发 + 信号处理（桌面专用壳，核心在 Serve）
+func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pacDomains, pacIPs []string, useWS bool, dns []string) {
 	if serverAddr == "" {
 		log.Fatal("client 模式必须指定 -server 服务器地址")
 	}
@@ -50,6 +50,14 @@ func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pa
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	defer undo() // 信号或错误退出前恢复系统代理
+	if len(dns) > 0 && dns[0] != "" { // 本地 DNS 转发：系统 DNS 指向 127.0.0.1:53 后，解析经隧道由 VPS 出口完成
+		dial := NewDialer(serverAddr, auth, dir, insecure, useWS, "", "")
+		go func() {
+			if err := StartDNS(ctx, "127.0.0.1:53", dns, protocol.ServerHost(serverAddr), dial); err != nil {
+				log.Printf("DNS 转发未启动: %v", err)
+			}
+		}()
+	}
 	if err := Serve(ctx, serverAddr, listen, auth, dir, insecure, useWS); err != nil && ctx.Err() == nil {
 		log.Fatalf("客户端退出: %v", err)
 	}
@@ -199,7 +207,7 @@ func socks5Proxy(br *bufio.Reader, c net.Conn, dial func(host string, port int) 
 	defer rc.Close()
 	log.Printf("访问 %s:%d", host, port)
 	c.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
-	relay(c, rc)
+	relay(&bufConn{Conn: c, r: br}, rc)
 }
 
 func readSocksAddr(br *bufio.Reader, atyp byte) (string, int, error) {
@@ -266,18 +274,32 @@ func httpConnectProxy(br *bufio.Reader, c net.Conn, dial func(host string, port 
 	defer rc.Close()
 	log.Printf("访问 %s:%d", host, port)
 	c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-	relay(c, rc)
+	relay(&bufConn{Conn: c, r: br}, rc)
 }
 
+// bufConn 先读尽协商期 bufio 缓冲里的残留字节（客户端不等代理应答就连发数据的场景），
+// bufio.Read 排空缓冲后直通底层连接，行为与裸 conn 一致
+type bufConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (w *bufConn) Read(p []byte) (int, error) { return w.r.Read(p) }
+
+// relay 双向转发：任一方向结束即关闭两端，及时释放隧道与服务端目标连接；
+// 由此在对端方向引发的 ErrClosed 是正常收尾，不刷日志
 func relay(a, b net.Conn) {
 	go func() {
-		if _, err := io.Copy(b, a); err != nil && !errors.Is(err, io.EOF) {
+		if _, err := io.Copy(b, a); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 			log.Printf("relay 上行结束: %v", err)
 		}
+		a.Close()
+		b.Close()
 	}()
-	if _, err := io.Copy(a, b); err != nil && !errors.Is(err, io.EOF) {
+	if _, err := io.Copy(a, b); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 		log.Printf("relay 下行结束: %v", err)
 	}
+	b.Close()
 }
 
 // 建立到服务端的隧道并指定目标。

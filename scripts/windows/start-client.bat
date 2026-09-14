@@ -11,7 +11,8 @@ set "SYS_PROXY=off"
 set "WS="
 set "INSECURE="
 set "PAC_PORT="
-if exist "%CONF%" for %%k in (DIRECT_ADDR AUTH_PASSWORD LOCAL_PORT HOST SYS_PROXY WS INSECURE PAC_PORT) do (
+set "DNS="
+if exist "%CONF%" for %%k in (DIRECT_ADDR AUTH_PASSWORD LOCAL_PORT HOST SYS_PROXY WS INSECURE PAC_PORT DNS) do (
   for /f "tokens=1,* delims==" %%a in ('findstr /b /c:"%%k=" "%CONF%"') do set "%%a=%%b"
 )
 if not defined DIRECT_ADDR echo [ERROR] client.conf missing DIRECT_ADDR & pause & exit /b 1
@@ -30,6 +31,7 @@ if defined HOST set "ARGS=%ARGS% -lhost %HOST%"
 if "%WS%"=="1" set "ARGS=%ARGS% -ws"
 if "%INSECURE%"=="1" set "ARGS=%ARGS% -insecure"
 if defined PAC_PORT set "ARGS=%ARGS% -pac-port %PAC_PORT%"
+if defined DNS set "ARGS=%ARGS% -dns %DNS%"
 
 taskkill /F /IM caotun.exe >nul 2>&1
 echo starting: caotun.exe %ARGS%

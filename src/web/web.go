@@ -54,6 +54,7 @@ type webConfig struct {
 	WsMode       bool     `json:"wsMode"`       // true = 走 CDN 地址(WebSocket)；false = 走直连地址
 	ProxyDomains []string `json:"proxyDomains"` // PAC 白名单：仅这些后缀走隧道，其余直连
 	ProxyIps     []string `json:"proxyIps"`     // PAC 额外走隧道的 IP（精确或 * 通配；内网段除外）
+	DNS          []string `json:"dns"`          // 本地 DNS 转发上游（IP 列表，经隧道按序尝试；空 = 关闭）
 }
 
 // DefaultProxyDomains 默认走隧道的域名后缀（面板"配置"卡可增删），覆盖常用国外站点
@@ -109,6 +110,7 @@ func defaultWebConfig() webConfig {
 		QuotaDays:    30,
 		Domain:       "example.com",
 		ProxyDomains: DefaultProxyDomains(),
+		DNS:          []string{"223.5.5.5"},
 	}
 }
 
@@ -288,6 +290,9 @@ func (m *webManager) spawn() error {
 	if m.cfg.WsMode {
 		cmd.Args = append(cmd.Args, "-ws")
 	}
+	if len(m.cfg.DNS) > 0 && m.cfg.DNS[0] != "" {
+		cmd.Args = append(cmd.Args, "-dns", strings.Join(m.cfg.DNS, ","))
+	}
 	sysproxy.HideWindowCmd(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
@@ -381,8 +386,9 @@ func (m *webManager) SaveConfig(cfg webConfig) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	dnsChanged := strings.Join(cfg.DNS, ",") != strings.Join(m.cfg.DNS, ",")
 	addrChanged := cfg.DirectAddr != m.cfg.DirectAddr ||
-		cfg.CdAddr != m.cfg.CdAddr || cfg.LocalPort != m.cfg.LocalPort || cfg.WsMode != m.cfg.WsMode
+		cfg.CdAddr != m.cfg.CdAddr || cfg.LocalPort != m.cfg.LocalPort || cfg.WsMode != m.cfg.WsMode || dnsChanged
 	passChanged := strings.TrimSpace(cfg.AuthPassword) != strings.TrimSpace(m.cfg.AuthPassword)
 	domainsChanged := strings.Join(cfg.ProxyDomains, ",") != strings.Join(m.cfg.ProxyDomains, ",")
 	wasRunning := m.clientAlive()
