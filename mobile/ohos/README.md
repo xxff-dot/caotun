@@ -37,6 +37,18 @@
 ## 已知边界
 
 - VPN 服务随调用方进程存活：测试阶段请保持 App 在后台不被系统杀掉（后台任务保活后续再接）；
-- 仅放行 TCP + DNS(UDP:53 转 DNS-over-TCP 走隧道)，QUIC 等其他 UDP 丢弃（促其降级 TCP）；
+- 仅放行 TCP + DNS(UDP:53)，QUIC 等其他 UDP 丢弃（促其降级 TCP）；
 - ICMP（ping）不经隧道，属预期；
 - 上架应用市场需通过华为对 VPN 权限的审核；自用调试签名即可。
+
+## 分流与配置
+
+- **fake-ip 白名单分流**：「代理域名」卡片编辑走隧道的域名（一行一个，默认 8 项，清空恢复默认），
+  写入 `cache/caotun/proxy_domains.txt`，断开重连生效；白名单之外域名经国内 DNS 解析真 IP 直连；
+- **直连 DNS**：白名单之外域名的解析上游（默认 223.5.5.5，可逗号分隔多个）；
+- 分流原理见 [docs/architecture.md](../../docs/architecture.md)，使用说明见 [docs/mobile-usage.md](../../docs/mobile-usage.md)。
+
+## 引擎日志
+
+`hilog -x --domain 0xC0A0 | grep CaotunEngine`（默认 hilog 不含 app 域，必须带 --domain）。
+内容：白名单加载条数、每条连接的建立/关闭与双向字节数、拨号失败原因、panic 堆栈、每 5 秒 tun 收发包计数。
