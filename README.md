@@ -2,7 +2,9 @@
 
 <img src="logo/caotun-mark.png" width="72" alt="caotun logo">
 
-单二进制加密 TCP 转发隧道：服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分。**零第三方依赖**，全部标准库（证书签发交由服务器上的 acme.sh 定时脚本，见「证书签发」一节）。
+单二进制加密 TCP 转发隧道：服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分。**零第三方依赖**，全部标准库（证书签发交由服务器上的 acme.sh 定时脚本，见「证书签发」一节）。当前版本 **1.2.0**（`caotun -v` 查看），与安卓/鸿蒙 App 版本一致。
+
+**详细文档**：[架构设计](docs/architecture.md) · [构建与部署](docs/build.md) · [故障排查](docs/troubleshooting.md) · [鸿蒙构建](docs/build-libcaotun.md)
 
 ## 功能特性
 
@@ -14,6 +16,7 @@
 - **防攻击 / 流量熔断**：认证失败 10 次（5 分钟滑动窗口）封 IP 30 分钟；并发上限；`-max-gb`/`-quota-days` 流量配额熔断（周期到期自动清零，保护按流量计费的账单）
 - **系统代理自动管理（Windows/macOS/Linux GNOME）**：`-sysproxy pac`（白名单分流，推荐）/ `all`（全局），启动接管、退出精确还原（Windows 注册表 / macOS networksetup / Linux gsettings；无桌面环境自动跳过）
 - **日志自动轮转**：同时写控制台与 `~/.caotun/<mode>.log`，超 5MB 轮转保留一份 `.old`，磁盘占用封顶
+- **手机客户端（安卓 / 鸿蒙）**：VPN 全局接管 + fake-ip 白名单分流——白名单域名（默认 github/google/youtube 等 8 项，App 内可增删）域名原文进隧道由 VPS 解析，**本机零污染解析**；其余流量国内 DNS 直连。预构建 `caotun.aar` / `libcaotun.so` 已入库，新用户免装 Go 交叉工具链
 
 ## 工作原理
 
@@ -68,23 +71,28 @@
 ```
 caotun/
 ├── src/                    Go 源码（go.mod 在此，构建/测试在 src/ 下执行）
-│   ├── main.go             入口：参数解析、模式分发、数据目录、日志初始化
+│   ├── main.go             入口：参数解析、模式分发、数据目录、日志初始化、-v 版本号
 │   ├── logrotate.go        日志轮转（5MB → .old）
 │   ├── protocol/           隧道协议：地址编解码（ATYP + addr + port）+ ServerHost
+│   ├── proxylist/          代理域名白名单：默认列表（8 项）+ 后缀匹配，移动端引擎与桌面 PAC 共用语义
 │   ├── ws/                 最小 WebSocket(RFC6455)：二进制帧 ↔ net.Conn 适配
 │   ├── sysproxy/           系统代理平台拆分：Windows 注册表 / macOS networksetup / Linux gsettings + 共用 PAC 服务
 │   ├── tunnel/             客户端：本地 SOCKS5/HTTP CONNECT 代理、TLS 双模式拨号、TOFU 指纹
-│   ├── tun2sock/           移动端专用：tun 网卡 → gvisor 用户态 TCP/IP 栈 → 隧道（TCP 转发 + DNS 劫持）
-│   ├── mobile/             移动端 cgo 入口：导出 C API 供鸿蒙 NAPI 桥调用（编 libcaotun.so）
-│   ├── server/             服务端：TLS 证书（文件热加载/自签兜底）、握手认证、转发、WS 接入、IP 封禁与流量配额
+│   ├── tun2sock/           移动端引擎：tun 网卡 → gvisor 用户态 TCP/IP 栈 → 隧道
+│   │                       fake-ip 白名单分流（fakeip.go）、DNS 劫持、CN 段表直连判定（cnroute.go，表内嵌）、
+│   │                       哨兵网段 DoT 自环守卫（sentinel.go）、连接级引擎日志
+│   ├── mobile/             移动端引擎核心（core/ 三端共用纯 Go 实现）与平台导出层（ohos cgo / android gomobile）
+│   ├── server/             服务端：TLS 证书（文件热加载/自签兜底）、握手认证、转发、WS 接入、dnsRelay、IP 封禁与流量配额
 │   └── web/                管理面板：HTTP API、子进程管理、服务端管理 API 转发、PAC 白名单、内嵌前端
+├── docs/                   文档：architecture.md（架构）/ build.md（构建部署）/ troubleshooting.md（排查）/ build-libcaotun.md
 ├── scripts/                配置在根目录共享，脚本按平台分目录（内容一一对应）
 │   ├── client.conf         客户端/面板启动配置（直连地址 / 认证密码 / 端口 / 系统代理 / 面板端口）
 │   ├── server.conf         服务端配置（监听 / 证书 / 配额 / 并发 / 轮换）
-│   ├── shell/              Linux + macOS 通用：build.sh 打包 + 全套启停脚本（读根目录 conf）
+│   ├── shell/              Linux + macOS 通用：build.sh 打包 + 全套启停脚本（读根目录 conf）+ build-android.sh / build-ohos.sh
 │   └── windows/            Windows 等效 .bat：build.bat 打包 + 全套启停（读 ..\ conf）
 ├── mobile/
-│   └── ohos/               鸿蒙（HarmonyOS NEXT）客户端 DevEco 工程：扫码导入 + VpnExtension 全局代理，详见 mobile/ohos/README.md
+│   ├── android/            安卓客户端工程：VpnService + Compose UI + 扫码导入，依赖 app/libs/caotun.aar（预构建入库）
+│   └── ohos/               鸿蒙（HarmonyOS NEXT）客户端 DevEco 工程：扫码导入 + VpnExtension 全局代理，依赖 entry/libs/arm64-v8a/libcaotun.so（预构建入库），详见 mobile/ohos/README.md
 ├── dist/                   发布包（build 产物，开箱即用）：根放三平台二进制与 conf，
 │                           shell/ 与 windows/ 为对应平台全套启停脚本
 └── .gitattributes          强制全仓库 LF
@@ -175,13 +183,36 @@ sh scripts/shell/stop-client.sh    # 停止（优先在 start 窗口按 Ctrl+C�
 
 非 Windows 客户端：`./caotun_linux client -server-addr 域名:443 -lport 21878`（密码写 `~/.caotun/auth` 或 `-auth` 指定），应用里手动指 SOCKS5 到该端口即可。
 
-## 手机端（鸿蒙 HarmonyOS NEXT）
+## 手机端（安卓 / 鸿蒙 HarmonyOS NEXT）
 
-与桌面共用同一 Go 核心（隧道引擎 + TOFU 指纹），加一层 gvisor 用户态 TCP/IP 栈把 tun 网卡流量接入隧道。**全自动使用**：PC 面板「手机扫码导入」显示二维码 → 手机 App 扫码 → 地址密码自动导入、VPN 即刻拉起（首次需在系统授权框点一次「允许」），全局代理生效。
+与桌面共用同一 Go 引擎核心（`src/mobile/core`）+ gvisor 用户态 TCP/IP 栈，把 tun 网卡流量接入隧道。**全自动使用**：PC 面板「手机扫码导入」显示二维码 → 手机 App 扫码 → 地址密码自动导入、VPN 即刻拉起（首次需在系统授权框点一次「允许」），全局代理生效。
 
-- 构建与使用详见 [mobile/ohos/README.md](mobile/ohos/README.md)；
-- Go 引擎交叉编译：`sh scripts/shell/build-ohos.sh`（产出 `libcaotun.so`，需 DevEco 的 OHOS NDK）；
-- 移动端流量特性：TCP 全量走隧道；DNS 劫持转 DNS-over-TCP；QUIC 等其他 UDP 丢弃（促其降级 TCP）。
+### 分流模型（fake-ip 白名单）
+
+- **白名单域名**（默认 8 项：github/google/googleapis/gstatic/youtube/huggingface/android/dl.google.com，App「代理域名」卡可增删）：DNS 秒回假 IP（198.18.0.0/15），App 连接假 IP 时**域名原文进隧道**，由 VPS 解析——本机不做任何会被污染的解析
+- **其余流量**：经国内 DNS（App「直连 DNS」卡可配，默认 223.5.5.5）解析真 IP 直连，不走 VPS 不吃流量
+- 白名单以 `cache/caotun/proxy_domains.txt`（一行一个后缀）持久化；**清空保存 = 恢复默认**；改完断开重连生效
+- 白名单外域名的 AAAA/HTTPS 记录返回空应答，强制应用走 IPv4 + 明文 SNI（v4-only VPN 标准做法）
+
+### 两端差异
+
+| | 安卓 | 鸿蒙 |
+|---|---|---|
+| VPN 框架 | VpnService + Compose UI | VpnExtensionAbility + ArkTS |
+| 引擎接入 | gomobile `caotun.aar` | NAPI `libcaotun.so` |
+| 直连防自环 | 路由层排除 CN/内网段 | protect socket |
+| 引擎日志 | `cache/caotun/engine.log`（run-as 读） | `hilog --domain 0xC0A0` |
+
+### 构建与产物
+
+`caotun.aar` 与 `libcaotun.so` **已预构建入库**（`mobile/*/libs/`），新用户用 Android Studio / DevEco 打开工程直接构建安装即可，**无需装 Go 交叉工具链**。改了 Go 引擎代码才需要重新编译：
+
+```bash
+sh scripts/shell/build-android.sh   # 出 caotun.aar（需 gomobile，详见 docs/build.md）
+sh scripts/shell/build-ohos.sh      # 出 libcaotun.so（需 ohos-go 工具链，详见 docs/build-libcaotun.md）
+```
+
+更多构建细节与坑位见 [docs/build.md](docs/build.md)；故障排查见 [docs/troubleshooting.md](docs/troubleshooting.md)。
 
 ## Web 管理面板
 
@@ -331,14 +362,15 @@ sh ~/caotun/issue-cert.sh direct.example.com --http
 ## 测试
 
 ```bash
-cd src && go test ./ws/            # 单元测试（WS 帧编解码）
+cd src && go test ./...            # 全部单元测试（WS 帧编解码 / fake-ip 池与 DNS 合成 / 哨兵守卫 / 段表判定）
 WS_ADDR=pdl.example.com:8443 WS_PASS=密码 go test -run TestWSLive ./tunnel/ -v   # 真机全链路：TLS(CA)→WS→认证→目标→HTTP 回读
 ```
 
 ## 设计取舍与已知限制
 
 - 每条连接一次 TLS 握手 + 认证，实现最简；浏览器对 CONNECT 连接自带复用，够用
-- 未做 UDP 转发、流量混淆、TUN 全局接管；被墙干扰时再说
+- 移动端已做 TUN 全局接管 + fake-ip 白名单分流；UDP 仅劫持 DNS，QUIC 等其他 UDP 丢弃促其降级 TCP
+- 非白名单的国外域名会被国内 DNS 污染导致直连失败——需要代理的域名加进「代理域名」白名单即可
 - git 不吃 Windows 系统代理，走隧道需一次性配置：
   `git config --global http.https://github.com.proxy socks5://127.0.0.1:21878`
 - 证书由服务器本地脚本签发（issue-cert.sh），签发失败看脚本输出与 `~/.acme.sh/` 日志；服务端只认证书文件，无黑盒
