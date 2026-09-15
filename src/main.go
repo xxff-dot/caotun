@@ -28,6 +28,9 @@ import (
 	"caotun/web"
 )
 
+// AppVersion 全端统一版本号(与安卓/鸿蒙 App 版本保持一致)
+const AppVersion = "1.2.0"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -42,6 +45,8 @@ func main() {
 		webCmd(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
+	case "-v", "--version", "version":
+		fmt.Println("caotun " + AppVersion)
 	default:
 		fmt.Fprintf(os.Stderr, "未知模式: %s\n可用模式: server / client / web，详见 caotun help\n", os.Args[1])
 		os.Exit(2)
