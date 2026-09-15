@@ -67,7 +67,9 @@ class MainActivity : ComponentActivity() {
     private val running = mutableStateOf(false)
     private val status = mutableStateOf("Starting")
     private val lastErr = mutableStateOf("")
+    private val netBlocked = mutableStateOf(false)
     private val dnsInput = mutableStateOf("223.5.5.5")
+    private val domainsInput = mutableStateOf("")
 
     // 编辑器:null = 关闭;非 null = 正在编辑的原始配置
     private var editing by mutableStateOf<Cfg?>(null)
@@ -125,7 +127,18 @@ class MainActivity : ComponentActivity() {
         configs.value = ConfigStore.load(this)
         active.intValue = if (configs.value.isEmpty()) -1 else 0
         dnsInput.value = ConfigStore.dns(this)
+        domainsInput.value = runCatching {
+            java.io.File(cacheDir, "caotun/proxy_domains.txt").readText()
+        }.getOrDefault("")
+            .replace("\r", "")
+            .split("\n")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .joinToString("\n")
         setContent { Dashboard() }
+        // 启动自动连接:已有服务器配置就直接连,免每次手点
+        // (首次会弹 VPN 授权框,授权后后续启动静默直连;引擎已在跑则不重复拉起)
+        if (!mobile.Mobile.running()) configs.value.getOrNull(active.intValue)?.let { startVpn(it) }
     }
 
     // ---------- VPN 启停 ----------
@@ -152,18 +165,59 @@ class MainActivity : ComponentActivity() {
 
     private fun doStart(cfg: Cfg) {
         lastStart = System.currentTimeMillis()
-        // 预解析服务器 IP:VPN 一旦激活,系统 DNS 经 tun 会与引擎自解析死锁。
-        // 解析失败不阻断(VPN 未启动时 Go 引擎自身可正常解析域名)
-        var dialIp = ""
-        try {
-            val all = java.net.InetAddress.getAllByName(cfg.server.substringBefore(':'))
-            dialIp = all.firstOrNull { it.address.size == 4 }?.hostAddress ?: ""
-        } catch (e: Exception) {
-            android.util.Log.w("CaotunUI", "pre-resolve failed, will use hostname")
-        }
-        startService(Intent(this, TunService::class.java))
         running.value = true
         status.value = "已连接"
+        // 预解析+起服务放子线程:getAllByName 在主线程抛 NetworkOnMainThreadException,
+        // 之前 dialip 一直是空的就是这个原因
+        Thread {
+            var dialIp = ""
+            try {
+                val all = java.net.InetAddress.getAllByName(cfg.server.substringBefore(':'))
+                dialIp = all.firstOrNull { it.address.size == 4 }?.hostAddress ?: ""
+            } catch (e: Exception) {
+                android.util.Log.w("CaotunUI", "pre-resolve failed: $e")
+            }
+            android.util.Log.i("CaotunUI", "dialip=$dialIp")
+            // 联网自检:EMUI「应用联网管理」关掉 WLAN/数据后,应用 uid 的所有
+            // TCP 都被系统层拦截(protect/豁免救不了),这里主动探测并引导用户放行
+            netBlocked.value = !canProbeOut()
+            if (netBlocked.value) {
+                runOnUiThread {
+                    lastErr.value = "无法联网:系统联网管理未放行 caotun(WLAN/数据),点此去开启 →"
+                }
+            }
+            ConfigStore.mirrorActive(this, cfg)
+            // 预解析的 IP 存给 TunService(VPN 激活后引擎用 IP 直拨避免 DNS 死锁)
+            getSharedPreferences("caotun_cfg", MODE_PRIVATE).edit()
+                .putString("dialip", dialIp).apply()
+            startService(Intent(this, TunService::class.java))
+        }.start()
+    }
+
+    // 应用 uid 出网探测:双上游任一连上即放行(拨 TCP DNS 53 口,国内公共 DNS 均支持)
+    private fun canProbeOut(): Boolean {
+        for (host in listOf("223.5.5.5", "119.29.29.29")) {
+            try {
+                val s = java.net.Socket()
+                s.connect(java.net.InetSocketAddress(host, 53), 2000)
+                s.close()
+                return true
+            } catch (e: Exception) {
+            }
+        }
+        return false
+    }
+
+    private fun openAppNetSettings() {
+        try {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", packageName, null)
+                )
+            )
+        } catch (e: Exception) {
+        }
     }
 
     private fun stopVpn() {
@@ -250,6 +304,17 @@ class MainActivity : ComponentActivity() {
         if (v.isNotEmpty()) ConfigStore.saveDns(this, v)
     }
 
+    // ---------- 代理域名白名单 ----------
+    private fun saveDomains() {
+        val dir = java.io.File(cacheDir, "caotun")
+        if (!dir.exists()) dir.mkdirs()
+        val lines = domainsInput.value.replace("\r", "").split("\n")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        java.io.File(dir, "proxy_domains.txt").writeText(lines.joinToString("\n"))
+        lastErr.value = if (running.value) "白名单已保存(${lines.size} 条),断开重连后生效" else "白名单已保存(${lines.size} 条)"
+    }
+
     // ---------- UI ----------
 
     @Composable
@@ -287,7 +352,12 @@ class MainActivity : ComponentActivity() {
 
             Spacer(Modifier.height(12.dp))
             if (lastErr.value.isNotEmpty()) {
-                Text(lastErr.value, fontSize = 12.sp, color = C_DANGER)
+                Text(
+                    lastErr.value, fontSize = 12.sp, color = C_DANGER,
+                    modifier = if (netBlocked.value) {
+                        Modifier.clickable { openAppNetSettings() }
+                    } else Modifier
+                )
                 Spacer(Modifier.height(6.dp))
             }
 
@@ -419,7 +489,7 @@ class MainActivity : ComponentActivity() {
 
             Spacer(Modifier.height(8.dp))
 
-            // DNS 设置
+            // 代理域名白名单(核心分流设置)
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = C_CARD,
@@ -428,7 +498,42 @@ class MainActivity : ComponentActivity() {
             ) {
                 Column(Modifier.padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("DNS", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = C_TEXT)
+                        Text("代理域名", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = C_TEXT)
+                        Spacer(Modifier.width(6.dp))
+                        Text("一行一个,仅这些域名走隧道", fontSize = 10.sp, color = C_SUB)
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "保存", fontSize = 12.sp, color = C_PRI,
+                            modifier = Modifier.clickable { saveDomains() }
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = domainsInput.value,
+                        onValueChange = { domainsInput.value = it },
+                        placeholder = { Text("github.com\ngoogle.com\nyoutube.com") },
+                        modifier = Modifier.fillMaxWidth().height(120.dp)
+                    )
+                    Text(
+                        "白名单完整替换默认列表;清空保存 = 恢复默认 8 条;改完断开重连生效",
+                        fontSize = 10.sp, color = C_SUB,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // 直连 DNS 设置(仅非白名单域名用它解析)
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = C_CARD,
+                shadowElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("直连 DNS", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = C_TEXT)
                         Spacer(Modifier.width(6.dp))
                         Text("多个逗号分隔,按序尝试", fontSize = 10.sp, color = C_SUB)
                         Spacer(Modifier.weight(1f))
@@ -448,7 +553,7 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        "上游解析器:国内直连探测与隧道解析共用;改完断开重连生效",
+                        "白名单之外域名的解析上游,国内公共 DNS 即可;改完断开重连生效",
                         fontSize = 10.sp, color = C_SUB,
                         modifier = Modifier.padding(top = 4.dp)
                     )

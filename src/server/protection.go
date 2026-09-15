@@ -42,14 +42,24 @@ type trafficServer struct {
 	total       int64     // 本周期累计流量（字节）
 	windowStart time.Time // 本周期起始时间
 	active      int64     // 当前并发连接数
-	mu          sync.Mutex
-	bans        map[string]*banInfo
+	banEnabled   bool      // 认证失败封 IP 开关（面板可切；持久化 security.json）
+	dnsUpstreams []string  // DNS 中继上游（境外优先，防 GFW 投毒；-dns-upstreams 可配）
+	mu           sync.Mutex
+	bans         map[string]*banInfo
+	dnsCache     map[string]dnsEntry // DNS 中继缓存：key=报文(除 ID)，值=响应+过期时间
 }
 
-func newTrafficServer(auth []byte, dir string, maxGB float64, quotaDays, maxConns int) *trafficServer {
+type dnsEntry struct {
+	resp []byte
+	exp  time.Time
+}
+
+func newTrafficServer(auth []byte, dir string, maxGB float64, quotaDays, maxConns int, dnsUpstreams []string) *trafficServer {
 	s := &trafficServer{dir: dir, maxGB: maxGB, quotaDays: quotaDays, maxConns: maxConns,
-		windowStart: time.Now(), bans: map[string]*banInfo{}}
+		windowStart: time.Now(), bans: map[string]*banInfo{}, banEnabled: true,
+		dnsUpstreams: dnsUpstreams, dnsCache: map[string]dnsEntry{}}
 	s.authV.Store(auth)
+	s.loadBanEnabled()
 	// 加载历史流量计数：兼容 JSON 与旧版纯数字两种格式
 	if b, err := os.ReadFile(filepath.Join(dir, "traffic.txt")); err == nil {
 		var qs quotaState
@@ -84,12 +94,19 @@ func (s *trafficServer) maybeRollover() {
 func (s *trafficServer) banned(ip string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.banEnabled {
+		return false
+	}
 	b, ok := s.bans[ip]
 	return ok && time.Now().Before(b.bannedUntil)
 }
 
 func (s *trafficServer) recordFail(ip string) {
 	s.mu.Lock()
+	if !s.banEnabled {
+		s.mu.Unlock()
+		return
+	}
 	defer s.mu.Unlock()
 	// map 有界化：条目过多时清理过期记录，防全网扫描把 map 撑大
 	if len(s.bans) > 4096 {
@@ -121,6 +138,32 @@ func (s *trafficServer) recordOK(ip string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.bans, ip)
+}
+
+// ---- 封禁开关（面板 /_admin/security 可切换；security.json 持久化） ----
+
+func (s *trafficServer) setBanEnabled(on bool) error {
+	s.mu.Lock()
+	s.banEnabled = on
+	s.mu.Unlock()
+	if !on { // 关闭即释放全部现存封禁
+		s.mu.Lock()
+		s.bans = map[string]*banInfo{}
+		s.mu.Unlock()
+	}
+	b, _ := json.Marshal(map[string]bool{"banEnabled": on})
+	return os.WriteFile(filepath.Join(s.dir, "security.json"), b, 0600)
+}
+
+func (s *trafficServer) loadBanEnabled() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var st struct {
+		BanEnabled *bool `json:"banEnabled"`
+	}
+	if b, err := os.ReadFile(filepath.Join(s.dir, "security.json")); err == nil && json.Unmarshal(b, &st) == nil && st.BanEnabled != nil {
+		s.banEnabled = *st.BanEnabled
+	}
 }
 
 func (s *trafficServer) overQuota() bool {

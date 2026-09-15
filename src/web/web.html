@@ -190,6 +190,17 @@ pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid
     </div>
 
     <div class="card">
+      <h2>安全策略</h2>
+      <div class="kv"><b>认证失败封禁<span class="tip">?<span class="ttip">同一 IP 认证失败 10 次（5 分钟窗口）封 30 分钟。调试认证/证书问题时临时关闭可避免测试连接被误封；重新开启前会先清空现存封禁名单。</span></span></b><span id="secBan">-</span></div>
+      <div class="row">
+        <button id="btnSecQuery">查询</button>
+        <button id="btnSecToggle">开启/关闭</button>
+        <span id="secMsg" class="msg"></span>
+      </div>
+      <p class="muted">状态持久化在服务器数据目录 security.json，服务端重启后保持；调试完建议重新开启。</p>
+    </div>
+
+    <div class="card">
       <h2>服务端证书</h2>
       <div class="kv"><b>签发者<span class="tip">?<span class="ttip">证书颁发机构。Let's Encrypt = 免费 ACME 真证书（浏览器/系统默认信任）；caotun = 自签兜底证书（客户端走 TOFU 指纹校验，安全性等同）。</span></span></b><span id="certIssuer">-</span></div>
       <div class="kv"><b>覆盖域名<span class="tip">?<span class="ttip">证书保护的域名清单。客户端访问的直连/CDN 域名必须在此清单内（或走 TOFU）。</span></span></b><span id="certNames">-</span></div>
@@ -347,6 +358,26 @@ async function loadSrv() {
   } catch (e) { $('srvUsed').textContent = '查询失败'; setMsg('srvMsg', e.message); }
 }
 $('btnSrvQuery').onclick = loadSrv;
+// ---- 安全策略：认证失败封禁开关 ----
+async function loadSec() {
+  try {
+    const s = await api('/api/security');
+    setPill('secBan', s.ban, s.ban ? '已开启' : '已关闭', s.ban ? '已开启' : '已关闭');
+  } catch (e) {
+    $('secBan').textContent = '-';
+    setMsg('secMsg', e.message);
+  }
+}
+$('btnSecQuery').onclick = loadSec;
+$('btnSecToggle').onclick = async () => {
+  try {
+    const cur = await api('/api/security');
+    await api('/api/security', { method: 'POST', body: JSON.stringify({ ban: !cur.ban }) });
+    loadSec();
+    setMsg('secMsg', '已切换');
+  } catch (e) { setMsg('secMsg', e.message); }
+};
+loadSec();
 // ---- 服务端证书与密码 ----
 async function loadCert() {
   try {

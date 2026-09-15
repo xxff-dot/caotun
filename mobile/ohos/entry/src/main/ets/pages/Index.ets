@@ -39,6 +39,7 @@ struct Index {
   @State lastErr: string = '';
   private lastStart: number = 0;
   @State dnsInput: string = '';
+  @State domainsInput: string = '';
   private transitionUntil: number = 0; // 启停过渡期:此间禁止心跳刷新抢状态
   private statusSub?: commonEventManager.CommonEventSubscriber;
 
@@ -83,6 +84,14 @@ struct Index {
       await this.mirrorActive(store, 0);
     }
     this.dnsInput = await store.get('dns', '223.5.5.5') as string;
+    try { // 白名单域名回显(cache/caotun/proxy_domains.txt,一行一个)
+      this.domainsInput = fileIo.readTextSync(getContext(this).cacheDir + '/caotun/proxy_domains.txt')
+        .replace(/\r/g, '').split('\n')
+        .map((l: string) => l.trim())
+        .filter((l: string) => l !== '' && !l.startsWith('#'))
+        .join('\n');
+    } catch (e) {
+    }
     if (this.beatFresh()) {
       this.running = true;
       this.status = '已连接';
@@ -144,6 +153,25 @@ struct Index {
     await store.put('dns', v);
     await store.flush();
     this.lastErr = this.running ? 'DNS 已保存,断开重连后生效' : 'DNS 已保存';
+  }
+
+  /** 保存代理域名白名单(一行一个);写入文件供引擎启动时加载,重连后生效 */
+  private async saveDomains(): Promise<void> {
+    const dir = getContext(this).cacheDir + '/caotun';
+    try {
+      if (!fileIo.accessSync(dir)) {
+        fileIo.mkdirSync(dir);
+      }
+    } catch (e) {
+      fileIo.mkdirSync(dir, true);
+    }
+    const lines = this.domainsInput.replace(/\r/g, '').split('\n')
+      .map((s: string) => s.trim())
+      .filter((s: string) => s !== '');
+    const f = fileIo.openSync(dir + '/proxy_domains.txt', fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+    fileIo.writeSync(f.fd, lines.join('\n'));
+    fileIo.closeSync(f);
+    this.lastErr = this.running ? '白名单已保存,断开重连后生效' : `白名单已保存(${lines.length} 条),断开重连后生效`;
   }
 
   private async refresh(): Promise<void> {
@@ -556,10 +584,31 @@ struct Index {
             }.width('100%').padding(24).borderRadius(14).backgroundColor(C_CARD)
           }
 
-          // DNS 设置
+          // 代理域名白名单(核心分流设置,一行一个)
           Column({ space: 6 }) {
             Row({ space: 6 }) {
-              Text('DNS').fontSize(13).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
+              Text('代理域名').fontSize(13).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
+              Text('一行一个,仅这些域名走隧道').fontSize(10).fontColor(C_SUB)
+              Blank()
+              Text('保存').fontSize(12).fontColor(C_PRI)
+                .onClick(() => this.saveDomains())
+            }.width('100%')
+            TextArea({ text: this.domainsInput, placeholder: 'github.com\ngoogle.com\nyoutube.com' })
+              .height(96).borderRadius(8)
+              .onChange((v: string) => this.domainsInput = v)
+            Text('白名单完整替换默认列表;清空保存 = 恢复默认 8 条;改完断开重连生效')
+              .fontSize(10).fontColor(C_SUB)
+          }
+          .width('100%')
+          .padding(12)
+          .borderRadius(14)
+          .backgroundColor(C_CARD)
+          .shadow({ radius: 6, color: 'rgba(30,60,120,0.06)', offsetY: 2 })
+
+          // 直连 DNS 设置(仅非白名单域名用它解析)
+          Column({ space: 6 }) {
+            Row({ space: 6 }) {
+              Text('直连 DNS').fontSize(13).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
               Text('多个逗号分隔,按序尝试').fontSize(10).fontColor(C_SUB)
               Blank()
               Text('保存').fontSize(12).fontColor(C_PRI)
@@ -568,7 +617,7 @@ struct Index {
             TextInput({ text: this.dnsInput, placeholder: '223.5.5.5' })
               .height(38).borderRadius(8)
               .onChange((v: string) => this.dnsInput = v)
-            Text('上游解析器:国内直连探测与隧道解析共用;改完断开重连生效')
+            Text('白名单之外域名的解析上游,国内公共 DNS 即可;改完断开重连生效')
               .fontSize(10).fontColor(C_SUB)
           }
           .width('100%')

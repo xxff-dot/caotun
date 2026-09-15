@@ -65,15 +65,6 @@ export default class VpnAbility extends VpnExtensionAbility {
       } as vpnExtension.VpnConfig);
       hilog.info(0x0000, TAG, 'tun fd=%{public}d', fd);
       const dir = this.context.cacheDir + '/caotun';
-      // CN 分流段表:从 rawfile 拷到缓存目录供引擎加载
-      try {
-        const raw = this.context.resourceManager.getRawFileContentSync('cn_cidr.txt');
-        const cf = fileIo.openSync(dir + '/cn_cidr.txt', fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-        fileIo.writeSync(cf.fd, raw.buffer);
-        fileIo.closeSync(cf);
-      } catch (e) {
-        hilog.error(0x0000, TAG, 'copy cn_cidr failed: %{public}s', JSON.stringify(e));
-      }
       // VPN 启动后系统 DNS 走 tun 会与引擎自解析形成死锁,先把服务器 IP 解析好落盘给 Go 用
       try {
         const host = cfg.server.split(':')[0];

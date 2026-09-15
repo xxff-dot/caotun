@@ -1,15 +1,19 @@
-// 中国大陆 IPv4 段表:启动时从文本文件加载(CIDR 每行一段),
-// 排序后二分查找判定目标 IP 是否大陆直连。数据源:
-// github.com/gaoyifan/china-operator-ip (china.txt),随构建更新
+// 中国大陆 IPv4 段表:内置随构建更新(数据源 github.com/gaoyifan/china-operator-ip),
+// 启动解析后排序,二分查找判定目标 IP 是否大陆直连。Options.CIDRPath 可选外部文件覆盖。
 package tun2sock
 
 import (
 	"bufio"
+	"embed"
 	"encoding/binary"
+	"io"
 	"net"
 	"os"
 	"sort"
 )
+
+//go:embed cn_cidr.txt
+var cnCIDREmbed embed.FS
 
 type cnRange struct{ start, end uint32 }
 
@@ -17,15 +21,29 @@ type CNMatcher struct {
 	ranges []cnRange
 }
 
-// LoadCNMatcher 加载 CN 段表;文件缺失/为空返回 nil(全部走隧道)
+// LoadCNMatcher 加载 CN 段表;外部文件缺失/为空返回 nil(调用方应回落内置表)
 func LoadCNMatcher(path string) *CNMatcher {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
+	return loadCNFrom(f)
+}
+
+// LoadCNMatcherDefault 内置段表(随构建更新)
+func LoadCNMatcherDefault() *CNMatcher {
+	f, err := cnCIDREmbed.Open("cn_cidr.txt")
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	return loadCNFrom(f)
+}
+
+func loadCNFrom(r io.Reader) *CNMatcher {
 	m := &CNMatcher{}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := trimCnLine(sc.Text())
 		if line == "" {
@@ -74,6 +92,20 @@ func (m *CNMatcher) IsCN(ip net.IP) bool {
 	return i < len(m.ranges) && m.ranges[i].start <= u
 }
 
+// DirectOK 判定裸 IP 直连是否安全:仅 CN 公网段或内网/保留段可以直连。
+// 其他 IP(国外等)直连拨号会被路由回 tun 造成自环,必须走隧道。
+// 段表未加载时一律 false(全走隧道,安全优先)。
+func (m *CNMatcher) DirectOK(ip net.IP) bool {
+	if m == nil || ip.To4() == nil {
+		return false
+	}
+	if b := ip.To4(); b[0] == 10 || (b[0] == 172 && b[1]&0xF0 == 16) || (b[0] == 192 && b[1] == 168) ||
+		b[0] == 127 || (b[0] == 169 && b[1] == 254) || (b[0] == 100 && b[1]&0xFC == 64) {
+		return true // 内网/回环/链路本地/CGNAT:路由在 tun 之外
+	}
+	return m.IsCN(ip)
+}
+
 func trimCnLine(s string) string {
 	for i := 0; i < len(s); i++ {
 		if s[i] == '#' {
@@ -84,51 +116,4 @@ func trimCnLine(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
-}
-
-// hasCNAnswer 解析 DNS 应答中的 A 记录,任一 IP 命中 CN 段表即返回 true
-func hasCNAnswer(resp []byte, cn *CNMatcher) bool {
-	if cn == nil || len(resp) < 12 {
-		return false
-	}
-	qd := int(binary.BigEndian.Uint16(resp[4:6]))
-	an := int(binary.BigEndian.Uint16(resp[6:8]))
-	off := 12
-	skipName := func() bool { // 跳过(可能压缩指向的)域名
-		for {
-			if off >= len(resp) {
-				return false
-			}
-			l := int(resp[off])
-			off++
-			if l == 0 {
-				return true
-			}
-			if l&0xC0 != 0 { // 压缩指针(2 字节)
-				off++
-				return true
-			}
-			off += l
-		}
-	}
-	for i := 0; i < qd; i++ {
-		if !skipName() {
-			return false
-		}
-		off += 4
-	}
-	for i := 0; i < an && off+10 <= len(resp); i++ {
-		if !skipName() {
-			break
-		}
-		typ := binary.BigEndian.Uint16(resp[off : off+2])
-		rdlen := int(binary.BigEndian.Uint16(resp[off+8 : off+10]))
-		if typ == 1 && rdlen == 4 && off+10+4 <= len(resp) {
-			if cn.IsCN(net.IP(resp[off+10 : off+14])) {
-				return true
-			}
-		}
-		off += 10 + rdlen
-	}
-	return false
 }

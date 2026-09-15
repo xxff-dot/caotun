@@ -110,6 +110,30 @@ func (m *webManager) serverHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// securityHandler 查询/切换服务端封禁开关（转发 /_admin/security；POST body {"ban":bool}）
+func (m *webManager) securityHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var req struct {
+			Ban bool `json:"ban"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err)
+			return
+		}
+		if _, err := m.adminCall("POST", "/_admin/security", map[string]any{"ban": req.Ban}, 15*time.Second); err != nil {
+			httpError(w, err)
+			return
+		}
+	}
+	out, err := m.adminCall("GET", "/_admin/security", nil, 15*time.Second)
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
+}
+
 // originGuard Origin/Host 校验中间件（port 为面板实际监听端口）：
 // 面板可改系统代理、可经管理 API 运维服务器，必须防恶意网页跨端口调用
 func originGuard(port string, next http.HandlerFunc) http.HandlerFunc {
@@ -208,6 +232,7 @@ func Run(listen, dir string) {
 	mux.HandleFunc("/api/log", originGuard(port, m.logHandler))
 	mux.HandleFunc("/api/server", originGuard(port, m.serverHandler))
 	mux.HandleFunc("/api/cert", originGuard(port, m.serverCertHandler))
+	mux.HandleFunc("/api/security", originGuard(port, m.securityHandler))
 	mux.HandleFunc("/api/pass/rotate", originGuard(port, m.passRotateHandler))
 
 	ln, err := net.Listen("tcp", listen)

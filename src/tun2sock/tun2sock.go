@@ -7,15 +7,18 @@ package tun2sock
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"caotun/protocol"
+	"caotun/proxylist"
 
 	"github.com/sagernet/gvisor/pkg/buffer"
 	"github.com/sagernet/gvisor/pkg/tcpip"
@@ -36,12 +39,14 @@ type Dialer = func(host string, port int) (net.Conn, error)
 
 // Options Serve 的运行参数
 type Options struct {
-	FD, MTU  int
-	Dial     Dialer // 隧道拨号器:非 CN 目标走这里
-	Direct   Dialer // 直连拨号器(protect 后走物理网络):CN 目标走这里
-	CIDRPath string   // 中国大陆 IPv4 段表文件;空 = 全部走隧道
-	DNS      []string // 上游解析器列表(经隧道按序尝试);空 = 默认 8.8.8.8
-	Logf     func(string, ...any)
+	FD, MTU         int
+	Dial            Dialer   // 隧道拨号器:白名单域名走这里(目标可以是域名)
+	Direct          Dialer   // 直连拨号器(protect 后走物理网络):其余流量走这里
+	ProxyDomains    []string // 代理域名白名单(后缀匹配):仅这些域名进隧道,其余直连
+	DirectResolvers []string // 非白名单域名的直连解析上游(默认 223.5.5.5;国内公共 DNS)
+	CIDRPath        string   // 可选:外部 CN 段表覆盖内置表(裸 IP 直连判定用)
+	DNS             []string // 已弃用:原隧道解析上游,fake-ip 模式不再使用
+	Logf            func(string, ...any)
 }
 
 // Serve 阻塞读取 tun fd 并处理流量，ctx 取消或 fd 关闭后返回。
@@ -56,21 +61,20 @@ func Serve(ctx context.Context, o Options) error {
 		logf = func(string, ...any) {}
 	}
 	tunFD, mtu := o.FD, o.MTU
-	dnss := o.DNS
-	if len(dnss) == 0 {
-		dnss = []string{"223.5.5.5"} // 默认阿里公共 DNS
-	}
+	// fake-ip 白名单模式:命中代理域名的查询秒回假 IP(TCP 反查域名进隧道,服务端解析),
+	// 其余查询转发国内上游解析真 IP 直连。全程无被污染的解析路径。
+	pool := newFakeIPPool(fakeIPCIDR, 65535)
 	cn := LoadCNMatcher(o.CIDRPath)
-	if cn != nil {
-		logf("CN 段表已加载:%d 段走直连", len(cn.ranges))
-	} else {
-		logf("CN 段表未加载,全部流量走隧道")
+	if cn == nil {
+		cn = LoadCNMatcherDefault() // 外部段表缺失时回落内置表(裸 IP 直连判定仍需 CN 段表)
 	}
+	match := func(domain string) bool { return proxylist.Match(domain, o.ProxyDomains) }
+	logf("代理域名白名单:%d 条", len(o.ProxyDomains))
 	f := os.NewFile(uintptr(tunFD), "tun")
 	defer f.Close()
-	logf("tun2sock 引擎启动 fd=%d mtu=%d dns=%v", tunFD, mtu, dnss)
+	logf("tun2sock 引擎启动(fake-ip %s) fd=%d mtu=%d", fakeIPCIDR, tunFD, mtu)
 
-	ep := &tunEndpoint{f: f, mtu: uint32(mtu)}
+	ep := &tunEndpoint{f: f, mtu: uint32(mtu), logErr: logf}
 	stk := stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
@@ -89,7 +93,10 @@ func Serve(ctx context.Context, o Options) error {
 	stk.SetTransportProtocolOption(tcp.ProtocolNumber, &rxBuf)
 	stk.SetTransportProtocolOption(tcp.ProtocolNumber, &txBuf)
 
-	// TCP：应用五元组的目标 = 真实目的地，直接拨隧道
+	// TCP 分流:假 IP → 反查域名,白名单域名原文进隧道(服务端解析);
+	// 哨兵网段 TCP(如 DoT:853)直接拒绝——直连拨它会路由回 tun 造成无限自环;
+	// 其余裸 IP:CN/内网走直连,国外一律走隧道。直连拨国外 IP 同样会自环,
+	// 曾把引擎拖死(表现为越用越卡直至全部黑洞),故绝不对未知 IP 直连
 	tcpFwd := tcp.NewForwarder(stk, 0, 1024, func(r *tcp.ForwarderRequest) {
 		dstHost, dstPort := r.ID().LocalAddress.String(), int(r.ID().LocalPort)
 		var wq waiter.Queue
@@ -98,20 +105,33 @@ func Serve(ctx context.Context, o Options) error {
 			r.Complete(true)
 			return
 		}
-		pick := func() Dialer {
-			if cn != nil && cn.IsCN(net.ParseIP(dstHost)) {
-				return o.Direct
-			}
-			return o.Dial
-		}
 		go func() {
-			rc, err := pick()(dstHost, dstPort)
+			var rc net.Conn
+			var err error
+			target := dstHost // 日志展示用
+			ip := net.ParseIP(dstHost)
+			if domain, ok := pool.lookup(ip); ok {
+				// 白名单域名:原文进隧道,服务端(境外出口)解析
+				target = domain
+				rc, err = o.Dial(domain, dstPort)
+			} else if inSentinel(ip) {
+				ep.Close() // 哨兵网段的 TCP(DoT:853 等):拒绝,促系统回落普通 DNS
+				return
+			} else if cn.DirectOK(ip) && o.Direct != nil {
+				rc, err = o.Direct(dstHost, dstPort)
+			} else {
+				target = dstHost
+				rc, err = o.Dial(dstHost, dstPort)
+			}
 			if err != nil {
-				logf("隧道连接 %s:%d 失败: %v", dstHost, dstPort, err)
+				logf("隧道连接 %s:%d 失败: %v", target, dstPort, err)
 				ep.Close()
 				return
 			}
-			relay(gonet.NewTCPConn(&wq, ep), rc)
+			gc := gonet.NewTCPConn(&wq, ep)
+			logf("隧道已建立 %s:%d", target, dstPort)
+			n := relay(gc, rc)
+			logf("隧道关闭 %s:%d 上行%d 下行%d", target, dstPort, n.a2b, n.b2a)
 		}()
 	})
 	stk.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpFwd.HandlePacket)
@@ -126,7 +146,7 @@ func Serve(ctx context.Context, o Options) error {
 		if terr != nil {
 			return true
 		}
-		go handleDNS(gonet.NewUDPConn(&wq, ep), o, cn, dnss, logf)
+		go handleDNS(gonet.NewUDPConn(&wq, ep), pool, match, o.Direct, o.DirectResolvers, logf)
 		return true
 	})
 	stk.SetTransportProtocolHandler(udp.ProtocolNumber, udpFwd.HandlePacket)
@@ -160,69 +180,70 @@ func Serve(ctx context.Context, o Options) error {
 	}
 }
 
-// relay 双向裸流转发（两端都 Close 才返回）
-func relay(a, b net.Conn) {
+// relay 双向裸流转发（两端都 Close 才返回），返回双向字节数
+func relay(a, b net.Conn) (stat struct{ a2b, b2a int64 }) {
 	done := make(chan struct{}, 2)
-	cp := func(dst, src net.Conn) {
-		io.Copy(dst, src)
+	cp := func(dst, src net.Conn, cnt *int64) {
+		m, _ := io.Copy(dst, src)
+		atomic.AddInt64(cnt, m)
 		dst.SetDeadline(time.Now()) // 唤醒对向 Copy
 		done <- struct{}{}
 	}
-	go cp(a, b)
-	go cp(b, a)
+	go cp(a, b, &stat.a2b)
+	go cp(b, a, &stat.b2a)
 	<-done
 	a.Close()
 	b.Close()
 	<-done
+	return
 }
 
-// handleDNS 单个应用 DNS 查询,分流解析(Clash/mosdns 同款):
-//  1. CN 探测:按配置列表逐个 protect 直连解析,答案 IP 命中 CN 段 → 采纳
-//     (国内站拿到国内 CDN IP,后续 TCP 命中 CN 段表直连,不绕道)
-//  2. 未命中 CN 或直连失败:按配置列表逐个经隧道问上游(境外出口,防污染)
-func handleDNS(conn *gonet.UDPConn, o Options, cn *CNMatcher, dnss []string, logf func(string, ...any)) {
+// handleDNS 单个应用 DNS 查询:
+//   - 命中白名单 → 秒回假 IP(不解析),TCP 命中假 IP 时域名原文进隧道,服务端解析;
+//   - 未命中 → 查询原文转发国内上游(DirectResolvers,直连)解析真 IP,应用直连。
+//
+// 白名单域名的 AAAA/HTTPS 回 NODATA,逼应用走 IPv4 + 明文 SNI。
+func handleDNS(conn *gonet.UDPConn, pool *fakeIPPool, match func(string) bool, direct Dialer, resolvers []string, logf func(string, ...any)) {
 	defer conn.Close()
 	buf := make([]byte, 4096) // ponytail: 单次查询；DNS-over-UDP 报文 EDNS0 下一般 ≤4KB
 	n, dstAddr, err := conn.ReadFrom(buf)
 	if err != nil || n == 0 {
 		return
 	}
-	query := buf[:n]
-	// CN 探测:直连解析,任一答案命中 CN 段即采纳
-	if o.Direct != nil {
-		for _, host := range dnss {
-			rc, err := o.Direct(host, 53)
+	name, qtype, qend := dnsQName(buf[:n])
+	if name == "" {
+		return
+	}
+	if !match(name) {
+		// 非白名单:查询原文转发国内上游解析真 IP(这些域名未被墙,答案干净),应用直连
+		if len(resolvers) == 0 {
+			resolvers = []string{"223.5.5.5"}
+		}
+		for _, up := range resolvers {
+			if direct == nil {
+				break
+			}
+			rc, err := direct(up, 53)
 			if err != nil {
 				continue
 			}
-			resp, err := dnsProbe(rc, query, 4*time.Second)
+			resp, err := dnsProbe(rc, buf[:n], 3*time.Second)
 			rc.Close()
-			if err == nil && hasCNAnswer(resp, cn) {
+			if err == nil && len(resp) >= 12 {
 				conn.WriteTo(resp, dstAddr)
 				return
 			}
 		}
-	}
-	// 隧道兜底:全部经隧道从 VPS 出口解析(防污染)
-	var lastErr error
-	for _, host := range dnss {
-		rc, err := o.Dial(host, 53)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		resp, err := dnsProbe(rc, query, 5*time.Second)
-		rc.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		conn.WriteTo(resp, dstAddr)
+		// 直连解析失败:回 NODATA 让应用重试
+		conn.WriteTo(nodataAnswer(buf[:n], qend), dstAddr)
 		return
 	}
-	if lastErr != nil {
-		logf("DNS 查询失败(全部上游 %v): %v", dnss, lastErr)
+	if qtype != 1 { // 白名单域名的 AAAA/HTTPS/TXT:NODATA,逼 IPv4 + 明文 SNI
+		conn.WriteTo(nodataAnswer(buf[:n], qend), dstAddr)
+		return
 	}
+	ip := pool.obtain(name)
+	conn.WriteTo(syntheticA(buf[:n], qend, ip), dstAddr)
 }
 
 // dnsProbe 带单次超时的 DNS-over-TCP 查询
@@ -240,6 +261,7 @@ type tunEndpoint struct {
 	mtu        uint32
 	rx         atomic.Uint64
 	tx         atomic.Uint64
+	logErr     func(string, ...any)
 	dispatcher stack.NetworkDispatcher
 }
 
@@ -314,7 +336,10 @@ func (e *tunEndpoint) SetMTU(mtu uint32) { e.mtu = mtu }
 
 func (*tunEndpoint) SetLinkAddress(tcpip.LinkAddress) {}
 
-// WritePackets 出向：网络栈发往应用的包写回 tun，一写一包
+// WritePackets 出向：网络栈发往应用的包写回 tun，一写一包。
+// 部分 VPN 框架给到的 fd 是非阻塞的：缓冲瞬时打满时 Write 返回 EAGAIN，
+// 直接当错误会让 gvisor 掐断连接（表现为下行偶发截断）。这里对 EAGAIN
+// 短暂重试；其余错误记录后中止。
 func (e *tunEndpoint) WritePackets(pkts stack.PacketBufferList) (int, tcpip.Error) {
 	n := 0
 	for _, pkt := range pkts.AsSlice() {
@@ -329,8 +354,20 @@ func (e *tunEndpoint) WritePackets(pkts stack.PacketBufferList) (int, tcpip.Erro
 			}
 			data = join.Bytes()
 		}
-		if _, err := e.f.Write(data); err != nil {
-			return n, &tcpip.ErrAborted{}
+		retry := 0
+		for {
+			_, err := e.f.Write(data)
+			if err == nil {
+				break
+			}
+			retry++
+			if retry > 2000 || !errors.Is(err, syscall.EAGAIN) { // ponytail: EAGAIN 自旋上限 2k 次(~1s)，超出视为真故障
+				if e.logErr != nil {
+					e.logErr("tun 写包失败(%d 包已写): %v", n, err)
+				}
+				return n, &tcpip.ErrAborted{}
+			}
+			time.Sleep(500 * time.Microsecond)
 		}
 		e.tx.Add(1)
 		n++

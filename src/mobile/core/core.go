@@ -3,14 +3,17 @@
 package core
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 
+	"caotun/proxylist"
 	"caotun/tun2sock"
 	"caotun/tunnel"
 )
@@ -37,14 +40,23 @@ func StartTunCore(server, pass, dir string, fd, mtu int64, ws bool, protectPath,
 	if server == "" || pass == "" || fd <= 0 {
 		return 2
 	}
-	os.MkdirAll(dir, 0700) // TOFU 指纹与 CN 段表所在目录
-	// 引擎日志落文件(各平台采集不到 .so 的 stderr),供排查
-	if f, err := os.OpenFile(dir+"/engine.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600); err == nil {
-		fmt.Fprintf(f, "=== %s ===\n", time.Now().Format("2006-01-02 15:04:05"))
+	os.MkdirAll(dir, 0700) // TOFU 指纹等数据目录
+	// 引擎日志落文件(各平台采集不到 .so 的 stderr);
+	// 文件随引擎 goroutine 结束才关闭(StartTunCore 本身立刻返回)
+	engLog, err := os.OpenFile(dir+"/engine.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err == nil {
+		fmt.Fprintf(engLog, "=== %s ===\n", time.Now().Format("2006-01-02 15:04:05"))
 	}
-	dnsList := SplitCSV(dns)
-	if len(dnsList) == 0 {
-		dnsList = []string{"223.5.5.5"}
+	// 代理域名白名单:proxy_domains.txt 存在 = 完整白名单(替换默认,一行一个后缀);
+	// 不存在 = 落盘默认列表。App 内编辑即改此文件,所见即所得
+	domainsPath := filepath.Join(dir, "proxy_domains.txt")
+	domains, readErr := readExtraDomains(domainsPath)
+	if readErr != nil || len(domains) == 0 {
+		domains = proxylist.Defaults()
+		if engLog != nil {
+			fmt.Fprintf(engLog, "白名单为空/缺失,恢复默认 %d 条\n", len(domains))
+		}
+		os.WriteFile(domainsPath, []byte(strings.Join(domains, "\n")+"\n"), 0600)
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	cancel = stop
@@ -53,6 +65,12 @@ func StartTunCore(server, pass, dir string, fd, mtu int64, ws bool, protectPath,
 		defer func() {
 			if r := recover(); r != nil {
 				fmt.Fprintf(os.Stderr, "engine panic: %v\n", r)
+				if engLog != nil {
+					fmt.Fprintf(engLog, "engine panic: %v\n%s\n", r, debug.Stack())
+				}
+			}
+			if engLog != nil {
+				engLog.Close()
 			}
 			mu.Lock()
 			running = false
@@ -60,16 +78,22 @@ func StartTunCore(server, pass, dir string, fd, mtu int64, ws bool, protectPath,
 		}()
 		dial := tunnel.NewDialer(server, pass, dir, false, ws, protectPath, dialIP)
 		direct := tunnel.NewDirectDialer(protectPath)
-		cnPath := filepath.Join(dir, "cn_cidr.txt")
 		err := tun2sock.Serve(ctx, tun2sock.Options{
-			FD:       int(fd),
-			MTU:      int(mtu),
-			Dial:     dial,
-			Direct:   direct,
-			CIDRPath: cnPath,
-			DNS:      dnsList,
+			FD:              int(fd),
+			MTU:             int(mtu),
+			Dial:            dial,
+			Direct:          direct,
+			ProxyDomains:    domains,
+			DirectResolvers: SplitCSV(dns),
 			Logf: func(f string, a ...any) {
-				fmt.Fprintf(os.Stderr, "%s\n", fmt.Sprintf(f, a...)) // stderr 兜底;各平台可另行采集
+				msg := fmt.Sprintf(f, a...)
+				fmt.Fprintf(os.Stderr, "%s\n", msg) // stderr 兜底;各平台可另行采集
+				if logHook != nil {
+					logHook(msg) // 鸿蒙 hilog(CaotunEngine tag)
+				}
+				if engLog != nil {
+					fmt.Fprintf(engLog, "%s %s\n", time.Now().Format("15:04:05.000"), msg)
+				}
 			},
 		})
 		mu.Lock()
@@ -115,4 +139,23 @@ func SplitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// readExtraDomains 读取用户追加的代理域名文件(每行一个后缀,# 注释)
+func readExtraDomains(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var out []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, strings.ToLower(strings.TrimSuffix(line, ".")))
+	}
+	return out, sc.Err()
 }

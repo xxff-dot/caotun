@@ -29,7 +29,7 @@ import (
 
 // ==================== 服务端 ====================
 
-func Run(listen, wsListen, auth, dir string, maxGB float64, quotaDays, maxConns int, certFile, keyFile string) {
+func Run(listen, wsListen, auth, dir string, maxGB float64, quotaDays, maxConns int, certFile, keyFile, dnsUpstreams string) {
 	cfg := &tls.Config{}
 	switch {
 	case certFile != "" || keyFile != "":
@@ -97,7 +97,7 @@ func Run(listen, wsListen, auth, dir string, maxGB float64, quotaDays, maxConns 
 		log.Fatalf("监听失败: %v", err)
 	}
 	log.Printf("服务端已启动 %s（并发上限 %d，流量配额 %g GB / %d 天）", listen, maxConns, maxGB, quotaDays)
-	s := newTrafficServer([]byte(auth), dir, maxGB, quotaDays, maxConns)
+	s := newTrafficServer([]byte(auth), dir, maxGB, quotaDays, maxConns, strings.Split(dnsUpstreams, ","))
 	s.manualCert = certFile
 	// WebSocket 接入（默认 8443 = Cloudflare 免费版可代理的 HTTPS 备用端口，-ws-port 可改）：CDN 模式与面板管理 API 共用
 	go serveWS(wsListen, cfg, s)
@@ -150,7 +150,12 @@ func handleServerConn(c net.Conn, s *trafficServer, ip string) {
 	mac.Write(nonce[:])
 	want := mac.Sum(nil)
 	got := make([]byte, len(want))
-	if _, err := io.ReadFull(c, got); err != nil || !hmac.Equal(want, got) {
+	if _, err := io.ReadFull(c, got); err != nil {
+		// 连接中断(链路抖动/GFW RST/客户端放弃)不算认证失败：
+		// 计入会误伤自己的出口 IP，导致整段线路被连环封禁
+		return
+	}
+	if !hmac.Equal(want, got) {
 		log.Printf("认证失败 %s", c.RemoteAddr())
 		s.recordFail(ip)
 		return
@@ -165,6 +170,15 @@ func handleServerConn(c net.Conn, s *trafficServer, ip string) {
 	}
 	host, port, err := protocol.ReadTarget(c)
 	if err != nil {
+		return
+	}
+	if port == 53 { // DNS：本地 UDP 原生查询 + 缓存，避免逐条 TCP 突发被公共 DNS 限流
+		cc := &countingConn{Conn: c, s: s}
+		c.SetDeadline(time.Time{})
+		if _, err := cc.Write([]byte{0}); err != nil { // 状态码必须先于查询：客户端发目标后等状态确认才发数据
+			return
+		}
+		s.dnsRelay(cc, host)
 		return
 	}
 	remote, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 10*time.Second)

@@ -50,6 +50,10 @@ func (s *trafficServer) adminServe(c net.Conn, req *http.Request) {
 		s.adminPassRotate(c, req)
 	case req.URL.Path == "/_admin/traffic" && req.Method == http.MethodGet:
 		s.adminTraffic(c)
+	case req.URL.Path == "/_admin/security" && req.Method == http.MethodGet:
+		s.adminSecurityGet(c)
+	case req.URL.Path == "/_admin/security" && req.Method == http.MethodPost:
+		s.adminSecuritySet(c, req)
 	default:
 		adminReply(c, http.StatusNotFound, map[string]any{"error": "未知管理接口"})
 	}
@@ -113,12 +117,35 @@ func (s *trafficServer) adminPassRotate(c net.Conn, req *http.Request) {
 	adminReply(c, http.StatusOK, map[string]any{"ok": true, "password": pass})
 }
 
-// adminTraffic 本周期累计流量与周期起始（面板"服务器流量"卡数据源）
+// adminTraffic 本周期累计流量与周期写入（面板"服务器流量"卡数据源）
 func (s *trafficServer) adminTraffic(c net.Conn) {
 	s.mu.Lock()
 	start := s.windowStart
 	s.mu.Unlock()
 	adminReply(c, http.StatusOK, map[string]any{"total": atomic.LoadInt64(&s.total), "windowStart": start})
+}
+
+// adminSecurityGet 当前封禁开关状态（面板"安全策略"卡数据源）
+func (s *trafficServer) adminSecurityGet(c net.Conn) {
+	s.mu.Lock()
+	on := s.banEnabled
+	s.mu.Unlock()
+	adminReply(c, http.StatusOK, map[string]any{"ban": on})
+}
+
+// adminSecuritySet 切换封禁开关：关闭即清空现存封禁，状态持久化到 security.json
+func (s *trafficServer) adminSecuritySet(c net.Conn, req *http.Request) {
+	var body struct {
+		Ban bool `json:"ban"`
+	}
+	if b, err := io.ReadAll(req.Body); err == nil {
+		json.Unmarshal(b, &body)
+	}
+	if err := s.setBanEnabled(body.Ban); err != nil {
+		adminReply(c, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	adminReply(c, http.StatusOK, map[string]any{"ok": true, "ban": body.Ban})
 }
 
 func (s *trafficServer) certMode() string {

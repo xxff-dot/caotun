@@ -19,7 +19,7 @@ mobile/ohos/entry/.cxx/
 mobile/android/.gradle/
 mobile/android/build/
 mobile/android/app/build/
-mobile/android/app/libs/caotun.aar
+# caotun.aar / libcaotun.so 为预构建产物,随仓库提交,新用户免装工具链
 mobile/android/local.properties
 mobile/android/.idea/
 mobile/ohos/entry/libs/arm64-v8a/*

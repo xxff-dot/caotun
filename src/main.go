@@ -94,6 +94,7 @@ func serverCmd(args []string) {
 	auth := fs.String("auth", "", "认证密码；不指定则读写 ~/.caotun/auth（首次自动生成）")
 	rotatePass := fs.Bool("rotate-pass", false, "启动时生成随机新密码写回 ~/.caotun/auth")
 	maxConns := fs.Int("max-conns", 100, "最大并发连接数")
+	dnsUpstreams := fs.String("dns-upstreams", "8.8.8.8,1.1.1.1", "DNS 中继上游（逗号分隔，境外优先防投毒；仅 53 端口的隧道转发生效）")
 	maxGB := fs.Float64("max-gb", 0, "流量配额 GB（0 不限；超限拒绝新隧道）")
 	quotaDays := fs.Int("quota-days", 30, "配额周期天数（到期自动清零；0 不限周期）")
 	cert := fs.String("cert", "", "手动证书 PEM（与 -key 成对；不指定则用 数据目录/fullchain.pem，缺失时自签兜底）")
@@ -119,7 +120,7 @@ func serverCmd(args []string) {
 			log.Fatalf("密码文件为空: %s（写入密码或用 -rotate-pass 生成）", authPath)
 		}
 	}
-	server.Run(net.JoinHostPort(*host, *port), net.JoinHostPort(*host, *wsPort), *auth, dir, *maxGB, *quotaDays, *maxConns, *cert, *key)
+	server.Run(net.JoinHostPort(*host, *port), net.JoinHostPort(*host, *wsPort), *auth, dir, *maxGB, *quotaDays, *maxConns, *cert, *key, *dnsUpstreams)
 }
 
 // ==================== client ====================
