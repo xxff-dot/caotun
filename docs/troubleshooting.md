@@ -4,6 +4,7 @@
 
 | 端 | 引擎日志 | 说明 |
 |---|---|---|
+| 桌面 | `~/.caotun/client.log`(client 模式)/ `web.log`(面板) | 含 `分流 <域名> → 直连/隧道` 决策日志(每域名每 10 分钟记一次) |
 | 安卓 | `adb shell run-as com.caotun.app cat cache/caotun/engine.log` | debug 包可读;含启动/连接/心跳/panic |
 | 鸿蒙 | `hdc shell hilog -x --domain 0xC0A0 \| grep CaotunEngine` | 须带 `--domain 0xC0A0`,默认输出不含 app 域 |
 | 服务端 | `~/.caotun/server.log` + `journalctl -u caotun` | 认证失败/隧道建立/关闭原因 |
@@ -28,6 +29,10 @@
 ### 特定网站 TLS 握手失败/证书错误
 
 经隧道时对端返回的证书与域名不符 = 目标 IP 已不是该站点(常见于 GCP/Fastly 回收再分配的 IP)。确认解析路径是否被污染,以及白名单是否覆盖该域名。
+
+### 桌面:白名单外域名打不开/页面转圈(pac 模式)
+
+pac 白名单外的域名浏览器直连,拿的是国内 DNS 的污染假 IP,连接挂死。**切到 all 全局智能分流**即可:客户端自动判定(国内 DNS 只做 CN 判定,判定 IP 不用于拨号;非 CN 域名原文进隧道由 VPS 境外解析)。验证:client.log 找 `分流 <域名> → 隧道`;顽固域名仍可在面板白名单强制走隧道。
 
 ### 隧道协议死锁(连接建立但无数据)
 

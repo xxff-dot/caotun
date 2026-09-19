@@ -2,7 +2,7 @@
 
 <img src="logo/caotun-mark.png" width="72" alt="caotun logo">
 
-单二进制加密 TCP 转发隧道：服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分。**零第三方依赖**，全部标准库（证书签发交由服务器上的 acme.sh 定时脚本，见「证书签发」一节）。当前版本 **1.2.0**（`caotun -v` 查看），与安卓/鸿蒙 App 版本一致。
+单二进制加密 TCP 转发隧道：服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分。**零第三方依赖**，全部标准库（证书签发交由服务器上的 acme.sh 定时脚本，见「证书签发」一节）。当前版本 **1.3.0**（`caotun -v` 查看），与安卓/鸿蒙 App 版本一致。
 
 **详细文档**：[架构设计](docs/architecture.md) · [构建与部署](docs/build.md) · [故障排查](docs/troubleshooting.md) · [鸿蒙构建](docs/build-libcaotun.md)
 
@@ -14,7 +14,7 @@
 - **域名服务端解析**：避开本地 DNS 污染
 - **WebSocket 传输（CDN 模式）**：流量封装为 WS 帧走 8443 端口，可被 Cloudflare 等七层 CDN 代理，隐藏源站 IP；与直连模式可同时可用，一键切换
 - **防攻击 / 流量熔断**：认证失败 10 次（5 分钟滑动窗口）封 IP 30 分钟；并发上限；`-max-gb`/`-quota-days` 流量配额熔断（周期到期自动清零，保护按流量计费的账单）
-- **系统代理自动管理（Windows/macOS/Linux GNOME）**：`-sysproxy pac`（白名单分流，推荐）/ `all`（全局），启动接管、退出精确还原（Windows 注册表 / macOS networksetup / Linux gsettings；无桌面环境自动跳过）
+- **系统代理自动管理（Windows/macOS/Linux GNOME）**：`-sysproxy pac`（白名单分流）/ `all`（全局 + 客户端智能分流：国内直连，其余域名自动走隧道，无需维护列表），启动接管、退出精确还原（Windows 注册表 / macOS networksetup / Linux gsettings；无桌面环境自动跳过）
 - **日志自动轮转**：同时写控制台与 `~/.caotun/<mode>.log`，超 5MB 轮转保留一份 `.old`，磁盘占用封顶
 - **手机客户端（安卓 / 鸿蒙）**：VPN 全局接管 + fake-ip 白名单分流——白名单域名（默认 github/google/youtube 等 8 项，App 内可增删）域名原文进隧道由 VPS 解析，**本机零污染解析**；其余流量国内 DNS 直连。预构建 `caotun.aar` / `libcaotun.so` 已入库，新用户免装 Go 交叉工具链
 
@@ -74,12 +74,13 @@ caotun/
 │   ├── main.go             入口：参数解析、模式分发、数据目录、日志初始化、-v 版本号
 │   ├── logrotate.go        日志轮转（5MB → .old）
 │   ├── protocol/           隧道协议：地址编解码（ATYP + addr + port）+ ServerHost
-│   ├── proxylist/          代理域名白名单：默认列表（8 项）+ 后缀匹配，移动端引擎与桌面 PAC 共用语义
+│   ├── proxylist/          代理域名白名单：默认列表（8 项）+ 后缀匹配，移动端引擎与桌面分流共用语义
+│   ├── cnroute/            中国大陆 IPv4 段表（go:embed 内嵌）：CN/内网直连判定，桌面与移动端共用
 │   ├── ws/                 最小 WebSocket(RFC6455)：二进制帧 ↔ net.Conn 适配
 │   ├── sysproxy/           系统代理平台拆分：Windows 注册表 / macOS networksetup / Linux gsettings + 共用 PAC 服务
-│   ├── tunnel/             客户端：本地 SOCKS5/HTTP CONNECT 代理、TLS 双模式拨号、TOFU 指纹
+│   ├── tunnel/             客户端：本地 SOCKS5/HTTP CONNECT 代理、智能分流路由（route.go：国内直连/其余走隧道）、TLS 双模式拨号、TOFU 指纹
 │   ├── tun2sock/           移动端引擎：tun 网卡 → gvisor 用户态 TCP/IP 栈 → 隧道
-│   │                       fake-ip 白名单分流（fakeip.go）、DNS 劫持、CN 段表直连判定（cnroute.go，表内嵌）、
+│   │                       fake-ip 白名单分流（fakeip.go）、DNS 劫持、
 │   │                       哨兵网段 DoT 自环守卫（sentinel.go）、连接级引擎日志
 │   ├── mobile/             移动端引擎核心（core/ 三端共用纯 Go 实现）与平台导出层（ohos cgo / android gomobile）
 │   ├── server/             服务端：TLS 证书（文件热加载/自签兜底）、握手认证、转发、WS 接入、dnsRelay、IP 封禁与流量配额
@@ -216,7 +217,7 @@ sh scripts/shell/build-ohos.sh      # 出 libcaotun.so（需 ohos-go 工具链�
 
 ## Web 管理面板
 
-功能：一键启停客户端、代理模式切换（pac 白名单分流 / all 全局 / off）、接入线路切换（直连 / CDN-WS，配置卡地址框随模式联动显示）、服务器地址等配置编辑、客户端日志查看、服务器累计流量/配额周期查询、**服务端证书有效期查看**（正式/自签的签发者与过期时间）、**服务端认证密码一键轮换**（热生效，双端自动更新）。服务端管理操作全部经**服务端管理 API**（见下节）完成，面板不需要任何 SSH 权限。
+功能：一键启停客户端、代理模式切换（pac 白名单分流 / all 全局智能分流（国内直连，其余走隧道）/ off）、接入线路切换（直连 / CDN-WS，配置卡地址框随模式联动显示）、服务器地址等配置编辑、客户端日志查看、服务器累计流量/配额周期查询、**服务端证书有效期查看**（正式/自签的签发者与过期时间）、**服务端认证密码一键轮换**（热生效，双端自动更新）。服务端管理操作全部经**服务端管理 API**（见下节）完成，面板不需要任何 SSH 权限。
 
 - 系统**代理设置由面板进程管理**：启动时接管（备份原值 → 写注册表 + 起 PAC 服务），停止/退出时精确还原；强杀面板导致的残留，重开面板再正常退出即可还原
 - 配置存 `~/.caotun/web.json`；换服务器改"配置"卡里的隧道地址即可
@@ -287,7 +288,7 @@ sh ~/caotun/issue-cert.sh direct.example.com --http
 | `-lhost` | 本地代理监听 IP（默认 127.0.0.1 仅本机；0.0.0.0=局域网共享，代理无认证，勿暴露公网） |
 | `-lport` | 本地代理端口（默认 21878） |
 | `-auth` | 认证密码；不指定则读 `~/.caotun/auth` |
-| `-sysproxy` | off / pac(白名单分流) / all(全局)，退出自动恢复 |
+| `-sysproxy` | off / pac(白名单分流) / all(全局+客户端智能分流：国内直连，其余自动走隧道)，退出自动恢复 |
 | `-pac-port` | PAC 脚本下载端口（默认 21879；仅 pac 模式用，代理流量不走此端口） |
 | `-ips` | pac 模式下额外走隧道的 IP（逗号分隔，支持 `*` 通配，如 `1.2.3.4` 或 `52.10.*`） |
 | `-dns` | 本地 DNS 转发上游（逗号分隔 IP，按序尝试；设置后 `127.0.0.1:53` 可作系统/网卡 DNS，查询经隧道由服务端出口解析，服务器域名自动走直连解析防回环。注意 223.5.5.5 对 Google 系域名返回国内 CDN 节点，下载 `dl.google.com` 失败时改 `8.8.8.8`） |
@@ -310,7 +311,7 @@ sh ~/caotun/issue-cert.sh direct.example.com --http
 | `AUTH_PASSWORD` | 认证密码（必填，需与服务端一致） |
 | `LOCAL_PORT` | 本地代理监听端口（默认 21878） |
 | `HOST` | 监听 IP（可选，默认 127.0.0.1 仅本机；局域网共享设 0.0.0.0，注意代理无认证） |
-| `SYS_PROXY` | 系统代理模式 off / pac / all（默认 off；pac=白名单分流，all=全局） |
+| `SYS_PROXY` | 系统代理模式 off / pac / all（默认 off；pac=白名单分流，all=全局+客户端智能分流） |
 | `WS` | 1=走 WebSocket/CDN 线路（`DIRECT_ADDR` 需换成橙云域名:8443）；默认直连 |
 | `INSECURE` | 1=跳过服务端证书指纹校验（不建议，仅调试用） |
 | `PAC_PORT` | PAC 服务端口（默认 21879；SYS_PROXY=pac 时自动起） |

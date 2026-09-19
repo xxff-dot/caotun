@@ -29,7 +29,7 @@ import (
 )
 
 // AppVersion 全端统一版本号(与安卓/鸿蒙 App 版本保持一致)
-const AppVersion = "1.2.0"
+const AppVersion = "1.3.0"
 
 func main() {
 	if len(os.Args) < 2 {
