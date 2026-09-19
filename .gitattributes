@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# bat 必须 CRLF，否则 cmd 解析切字符
+*.bat text eol=crlf

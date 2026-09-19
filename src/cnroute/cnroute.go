@@ -1,6 +1,7 @@
-// 中国大陆 IPv4 段表:内置随构建更新(数据源 github.com/gaoyifan/china-operator-ip),
-// 启动解析后排序,二分查找判定目标 IP 是否大陆直连。Options.CIDRPath 可选外部文件覆盖。
-package tun2sock
+// Package cnroute 中国大陆 IPv4 段表:内置随构建更新(数据源 github.com/gaoyifan/china-operator-ip),
+// 启动解析后排序,二分查找判定目标 IP 是否大陆直连。独立成包以便桌面客户端(tunnel)复用,
+// 避免 import tun2sock 拖入 gvisor。Options.CIDRPath 可选外部文件覆盖。
+package cnroute
 
 import (
 	"bufio"

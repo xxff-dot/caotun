@@ -9,6 +9,7 @@ cd src
 go build ./... && go vet ./... && go test ./...     # 全部在 src/ 下执行
 go run . server        # 服务端(默认 :443, WS :8443)
 go run . client -server-addr host:443 -auth 密码   # 本地 SOCKS5 :21878
+go run . client -server-addr host:443 -auth 密码 -sysproxy all   # 全局智能分流:国内直连,其余带域名走隧道
 go run . web           # 管理面板 :21877
 ```
 

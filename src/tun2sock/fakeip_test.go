@@ -3,6 +3,8 @@ package tun2sock
 import (
 	"net"
 	"testing"
+
+	"caotun/cnroute"
 )
 
 func u32ip(v uint32) net.IP {
@@ -66,7 +68,7 @@ func TestDNSQName(t *testing.T) {
 }
 
 func TestFakeIPNotInCNTable(t *testing.T) {
-	cn := LoadCNMatcher(`E:\tools\tcpforward\mobile\android\app\src\main\res\raw\cn_cidr.txt`)
+	cn := cnroute.LoadCNMatcher(`E:\tools\tcpforward\mobile\android\app\src\main\res\raw\cn_cidr.txt`)
 	if cn == nil {
 		t.Skip("本机无段表")
 	}

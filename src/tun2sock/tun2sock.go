@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"caotun/cnroute"
 	"caotun/protocol"
 	"caotun/proxylist"
 
@@ -64,9 +65,9 @@ func Serve(ctx context.Context, o Options) error {
 	// fake-ip 白名单模式:命中代理域名的查询秒回假 IP(TCP 反查域名进隧道,服务端解析),
 	// 其余查询转发国内上游解析真 IP 直连。全程无被污染的解析路径。
 	pool := newFakeIPPool(fakeIPCIDR, 65535)
-	cn := LoadCNMatcher(o.CIDRPath)
+	cn := cnroute.LoadCNMatcher(o.CIDRPath)
 	if cn == nil {
-		cn = LoadCNMatcherDefault() // 外部段表缺失时回落内置表(裸 IP 直连判定仍需 CN 段表)
+		cn = cnroute.LoadCNMatcherDefault() // 外部段表缺失时回落内置表(裸 IP 直连判定仍需 CN 段表)
 	}
 	match := func(domain string) bool { return proxylist.Match(domain, o.ProxyDomains) }
 	logf("代理域名白名单:%d 条", len(o.ProxyDomains))

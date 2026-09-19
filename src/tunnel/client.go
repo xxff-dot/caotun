@@ -58,7 +58,7 @@ func Run(serverAddr, listen, auth, sysMode string, insecure bool, dir string, pa
 			}
 		}()
 	}
-	if err := Serve(ctx, serverAddr, listen, auth, dir, insecure, useWS); err != nil && ctx.Err() == nil {
+	if err := Serve(ctx, serverAddr, listen, auth, dir, insecure, useWS, pacDomains); err != nil && ctx.Err() == nil {
 		log.Fatalf("客户端退出: %v", err)
 	}
 }
@@ -121,12 +121,15 @@ func NewDirectDialer(protectPath string) func(host string, port int) (net.Conn, 
 }
 
 // Serve 本地代理核心：监听 listen，SOCKS5 + HTTP CONNECT 同端口，每连接一条隧道。
+// whitelist 为强制走隧道的域名后缀（智能分流白名单快路径，可为 nil——其余域名按 CN 段表判定）。
 // ctx 取消即关闭监听并返回（移动端 VpnExtension 与桌面 Run 共用）
-func Serve(ctx context.Context, serverAddr, listen, auth, dir string, insecure bool, useWS bool) error {
+func Serve(ctx context.Context, serverAddr, listen, auth, dir string, insecure bool, useWS bool, whitelist []string) error {
 	if serverAddr == "" {
 		return errors.New("client 模式必须指定 -server 服务器地址")
 	}
 	dial := NewDialer(serverAddr, auth, dir, insecure, useWS, "", "")
+	direct := NewDirectDialer("")
+	route := NewRouter(whitelist, direct, dial)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -147,7 +150,7 @@ func Serve(ctx context.Context, serverAddr, listen, auth, dir string, insecure b
 			time.Sleep(10 * time.Millisecond) // 监听异常(如 fd 耗尽)时防热循环
 			continue
 		}
-		go handleClientConn(c, dial)
+		go handleClientConn(c, route)
 	}
 }
 

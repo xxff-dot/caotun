@@ -104,7 +104,7 @@ pre { margin:10px 0 0; padding:12px 14px; background:var(--bg); border:1px solid
       <h2>代理模式</h2>
       <div class="modes">
         <label><input type="radio" name="mode" value="pac"> pac · 白名单分流</label>
-        <label><input type="radio" name="mode" value="all"> all · 全局</label>
+        <label><input type="radio" name="mode" value="all"> all · 全局智能分流（国内直连，其余走隧道）</label>
         <label><input type="radio" name="mode" value="off"> off · 不接管</label>
       </div>
       <p class="muted">切换即时生效，不中断客户端（仅改变系统代理接管方式）。</p>
@@ -291,11 +291,11 @@ async function loadConfig() {
 }
 
 $('btnStart').onclick = async () => {
-  try { await api('/api/start', {method:'POST'}); } catch (e) { setMsg('stMsg', e.message); }
+  try { await api('/api/start', {method:'POST'}); setMsg('stMsg', '已启动'); } catch (e) { setMsg('stMsg', e.message); }
   loadStatus();
 };
 $('btnStop').onclick = async () => {
-  try { await api('/api/stop', {method:'POST'}); } catch (e) { setMsg('stMsg', e.message); }
+  try { await api('/api/stop', {method:'POST'}); setMsg('stMsg', '已停止'); } catch (e) { setMsg('stMsg', e.message); }
   loadStatus();
 };
 document.querySelectorAll('input[name=mode]').forEach(r => {

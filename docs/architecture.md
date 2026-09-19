@@ -39,10 +39,11 @@ App 问 DNS（系统解析器 → tun 哨兵 10.111.0.2:53）
 
 ## 3. 桌面客户端（src/tunnel）
 
-- **本地代理**：单端口同时支持 SOCKS5 与 HTTP CONNECT（首字节识别），白名单外域名照常直连
+- **本地代理**：单端口同时支持 SOCKS5 与 HTTP CONNECT（首字节识别），经智能分流路由器（`NewRouter`，route.go）统一决策
+- **智能分流**（route.go）：白名单域名强制走隧道；其余域名用国内 DNS（223.5.5.5 等，2s 超时，结果 TTL 缓存 10min）仅做 CN 判定——**判定用的 IP 从不用于拨号**，非 CN 域名把原文递给服务端境外解析（污染假 IP 无害）。CN/内网 IPv4 字面量直连，非 CN IPv4 与 IPv6 字面量走隧道。解析失败兜底走隧道
 - **隧道拨号**（`NewDialer`）：TLS → nonce/HMAC → 目标（SOCKS5 传入的域名/IP 原样走 ATYP）→ 等状态码
 - **TOFU**：先标准 CA 校验，失败回退自签 + SHA-256 指纹比对（`fingerprint.txt`）；线路切换自动重置指纹
-- **系统代理**（`sysproxy/`）：`-sysproxy pac|all|off`，Windows 注册表 / macOS networksetup / Linux gsettings，启动接管退出精确还原；PAC 白名单默认 100+ 常用国外域名（`web.DefaultProxyDomains`，面板可增删）
+- **系统代理**（`sysproxy/`）：`-sysproxy pac|all|off`，Windows 注册表 / macOS networksetup / Linux gsettings，启动接管退出精确还原；`all` = 全局代理 + 客户端内智能分流（国内直连）；PAC 白名单默认 100+ 常用国外域名（`web.DefaultProxyDomains`，面板可增删）
 - **本地 DNS 转发**（可选 `-dns`）：`127.0.0.1:53` 作系统 DNS，查询经隧道由服务端出口解析；服务器域名自动直连解析防回环
 
 ## 4. Web 管理面板（src/web）
