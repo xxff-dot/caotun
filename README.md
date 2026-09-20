@@ -1,8 +1,8 @@
-# caotun
+# 草豚 caotun
 
-<img src="logo/caotun-mark.png" width="72" alt="caotun logo">
+<img src="logo/caotun-1024.png" width="88" alt="草豚 caotun logo">
 
-单二进制加密 TCP 转发隧道：服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分。**零第三方依赖**，全部标准库（证书签发交由服务器上的 acme.sh 定时脚本，见「证书签发」一节）。当前版本 **1.3.0**（`caotun -v` 查看），与安卓/鸿蒙 App 版本一致。
+**草豚（caotun）**——单二进制加密 TCP 转发隧道：服务端 / 客户端 / Web 管理面板是同一个程序，`server` / `client` / `web` 子命令区分。**零第三方依赖**，全部标准库（证书签发交由服务器上的 acme.sh 定时脚本，见「证书签发」一节）。当前版本 **1.3.0**（`caotun -v` 查看），与安卓/鸿蒙 App 版本一致。
 
 **详细文档**：[架构设计](docs/architecture.md) · [构建与部署](docs/build.md) · [故障排查](docs/troubleshooting.md) · [鸿蒙构建](docs/build-libcaotun.md)
 

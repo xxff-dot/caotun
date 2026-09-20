@@ -34,8 +34,8 @@ def rounded_gradient_bg(size):
     return img
 
 
-def draw_mark(img, size):
-    """白色隧道环(缺口朝右) + 绿色数据包在缺口处"""
+def draw_mark(img, size, ring=WHITE):
+    """隧道环(缺口朝右) + 绿色数据包在缺口处;ring 颜色由调用方定"""
     s = size / S
     d = ImageDraw.Draw(img)
     cx, cy = int(500 * s), int(512 * s)
@@ -44,27 +44,27 @@ def draw_mark(img, size):
     bbox = [cx - rb, cy - rb, cx + rb, cy + rb]
 
     # 隧道环:缺口朝右(画 35°..325°,余下 70° 为缺口)
-    d.arc(bbox, start=35, end=325, fill=WHITE + (255,), width=w)
+    d.arc(bbox, start=35, end=325, fill=ring + (255,), width=w)
 
     # 环两端圆头
     for ang in (35, 325):
         a = math.radians(ang)
         ex, ey = cx + rb * math.cos(a), cy + rb * math.sin(a)
         r = w / 2
-        d.ellipse([ex - r, ey - r, ex + r, ey + r], fill=WHITE + (255,))
+        d.ellipse([ex - r, ey - r, ex + r, ey + r], fill=ring + (255,))
 
     # 运动轨迹线(环心 → 数据包)
     y = cy
     x0, x1 = cx - int(150 * s), cx + int(120 * s)
-    d.line([x0, y, x1, y], fill=WHITE + (255,), width=int(30 * s))
+    d.line([x0, y, x1, y], fill=ring + (255,), width=int(30 * s))
     r2 = int(15 * s)
-    d.ellipse([x0 - r2, y - r2, x0 + r2, y + r2], fill=WHITE + (255,))
-    d.ellipse([x1 - r2, y - r2, x1 + r2, y + r2], fill=WHITE + (255,))
+    d.ellipse([x0 - r2, y - r2, x0 + r2, y + r2], fill=ring + (255,))
+    d.ellipse([x1 - r2, y - r2, x1 + r2, y + r2], fill=ring + (255,))
 
     # 数据包:缺口处的绿色圆点
     px, pr = cx + int(228 * s), int(96 * s)
     d.ellipse([px - pr, cy - pr, px + pr, cy + pr], fill=GREEN + (255,),
-              outline=WHITE + (255,), width=int(18 * s))
+              outline=ring + (255,), width=int(18 * s))
 
 
 def main():
@@ -77,9 +77,9 @@ def main():
     draw_mark(app, S)
     app.save(os.path.join(out, 'caotun-1024.png'))
 
-    # 透明底标志(文档用)
+    # 透明底标志(文档用):中蓝环,浅色/深色主题下都可见
     mark = Image.new('RGBA', (S, S), (0, 0, 0, 0))
-    draw_mark(mark, S)
+    draw_mark(mark, S, ring=C1)
     mark.save(os.path.join(out, 'caotun-mark.png'))
 
     # 网页 favicon

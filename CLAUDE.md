@@ -24,13 +24,14 @@ go run . web           # 管理面板 :21877
 - **隧道协议**：TLS（TOFU 指纹兜底）→ nonce/HMAC → 目标地址（ATYP 支持 IPv4/域名）→ **1 字节状态码** → 裸流。WS 模式多一层 WebSocket（CDN 穿透）。新增服务端分支必须先回状态码再读数据，否则协议死锁。
 - **目标端口 53**：服务端 `dnsrelay.go` 本地 UDP 查询 + 60s 缓存。
 - **服务端**：`protection.go`（IP 封禁/密码轮换/配额熔断）、`admin.go`（`/_admin/*`，web 面板经 HTTPS 调用）。
-- **CN 段表**内嵌 `tun2sock/cn_cidr.txt`（go:embed），用于裸 IP 直连判定；`Options.CIDRPath` 可选覆盖。
+- **CN 段表**内嵌 `src/cnroute/cn_cidr.txt`（go:embed，独立包 `src/cnroute` 供桌面/移动共用），用于裸 IP 直连判定；`Options.CIDRPath` 可选覆盖。
 
 ## 目录
 
 ```
 src/tun2sock/      移动端引擎:fake-ip、DNS 劫持、TCP 分流、tun 读写(gvisor)
-src/tunnel/        桌面/移动客户端:SOCKS5、隧道拨号器、TOFU
+src/tunnel/        桌面/移动客户端:SOCKS5、智能分流路由(route.go)、隧道拨号器、TOFU
+src/cnroute/       CN IPv4 段表(go:embed,纯标准库):直连判定,桌面/移动共用
 src/server/        服务端:握手、转发、dnsRelay、防护、管理 API
 src/web/           管理面板(//go:embed web.html)+桌面 PAC 白名单
 src/proxylist/     代理域名白名单(默认列表+后缀匹配)
